@@ -96,12 +96,13 @@ ARIS 上游更新前必须重新执行 inventory、危险入口和契约差异�
   - `auto-review-loop-minimax`
   - `result-to-claim`
   - `training-check`
+  - `system-profile`
   - `serverless-modal`
   - `vast-gpu`
   - `qzcli`
   - `dse-loop`
 
-前八个覆盖版本保留原工作流职责，但把执行、监控、停止和证据读取改为 `arw`/Control API。`serverless-modal`、`vast-gpu`、`qzcli` 和 `dse-loop` 在本 profile 中默认 fail closed：不能创建云资源、外部 GPU job、任意进程或后台循环。未来若实现经过同等审查的 typed provider adapter，必须通过独立规格和门禁后才能激活。
+实验桥接、运行、监控、评审和证据相关的覆盖版本保留原工作流职责，但把执行、监控、停止和证据读取改为 `arw`/Control API。`system-profile`、`serverless-modal`、`vast-gpu`、`qzcli` 和 `dse-loop` 在本 profile 中默认 fail closed：不能直接探测/运行本地算力、创建云资源、外部 GPU job、任意进程或后台循环。未来若实现经过同等审查的 typed provider adapter，必须通过独立规格和门禁后才能激活。
 
 `research-pipeline`、`idea-discovery`、`paper-writing`、审计链和其他上游 skills 保持完整；它们调用同名执行 skills 时自然进入安全覆盖层。
 
