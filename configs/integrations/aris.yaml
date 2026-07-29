@@ -1,0 +1,11 @@
+schema_version: 1
+repo_path: /Users/huangjiahao/自动化科研/aris
+origin: https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git
+commit: 53562a7c64cc1d55946cba1fb8a8416137143d14
+license_spdx: MIT
+inventory_count: 81
+shared_reference_count: 30
+inventory_sha256: 0d0bd0f7113ca64afbe671664fcc901c472d28b857f310d6b5d10f792c094c93
+source_tree_sha256: 0e05726b74febb1ae926c5baece83b8d98a4b280fdd2c1e7bf5253959cbc176b
+activation_mode: disabled
+unknown_skill_policy: block
