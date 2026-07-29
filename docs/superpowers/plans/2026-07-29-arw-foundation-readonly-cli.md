@@ -21,11 +21,11 @@
 
 ---
 
-### Task 1: Repository migration and project foundation
+### Task 1: Repository placement and project foundation
 
 **Files:**
-- Move without editing: `/Users/huangjiahao/自动化科研/auto-academic` → `/Users/huangjiahao/自动化科研/karpathy-autoresearch`
-- Create repository: `/Users/huangjiahao/自动化科研/auto-academic`
+- Verify upstream repository: `/Users/huangjiahao/自动化科研/karpathy-autoresearch`
+- Verify Workbench repository: `/Users/huangjiahao/自动化科研/auto-academic`
 - Create: `/Users/huangjiahao/自动化科研/auto-academic/pyproject.toml`
 - Create: `/Users/huangjiahao/自动化科研/auto-academic/Makefile`
 - Create: `/Users/huangjiahao/自动化科研/auto-academic/README.md`
@@ -38,33 +38,34 @@
 - Copy: this plan to `/Users/huangjiahao/自动化科研/auto-academic/docs/superpowers/plans/2026-07-29-arw-foundation-readonly-cli.md`
 
 **Interfaces:**
-- Consumes: clean upstream clone and empty GitHub repository.
+- Consumes: clean upstream clone and initialized Workbench remote at their final sibling paths.
 - Produces: importable `arw` package version `0.1.0`, locked Python environment, quality command, and pinned upstream project metadata.
 
-- [ ] **Step 1: Verify and move the upstream clone**
+- [x] **Step 1: Verify the final upstream placement**
 
 Run:
 
 ```bash
-test ! -e /Users/huangjiahao/自动化科研/karpathy-autoresearch
-test "$(git -C /Users/huangjiahao/自动化科研/auto-academic remote get-url origin)" = "https://github.com/karpathy/autoresearch"
-test "$(git -C /Users/huangjiahao/自动化科研/auto-academic rev-parse HEAD)" = "228791fb499afffb54b46200aca536f79142f117"
+test "$(git -C /Users/huangjiahao/自动化科研/karpathy-autoresearch remote get-url origin)" = "https://github.com/karpathy/autoresearch"
+test "$(git -C /Users/huangjiahao/自动化科研/karpathy-autoresearch rev-parse HEAD)" = "228791fb499afffb54b46200aca536f79142f117"
+test -z "$(git -C /Users/huangjiahao/自动化科研/karpathy-autoresearch status --porcelain=v1 --untracked-files=all)"
+```
+
+Expected: all checks exit 0; the clean upstream repository is at `karpathy-autoresearch` with unchanged origin and HEAD.
+
+- [x] **Step 2: Verify the final Workbench placement**
+
+Run:
+
+```bash
+test "$(git -C /Users/huangjiahao/自动化科研/auto-academic remote get-url origin)" = "https://github.com/zhouduichen/auto-academic.git"
+test "$(git -C /Users/huangjiahao/自动化科研/auto-academic symbolic-ref --short HEAD)" = "main"
+git -C /Users/huangjiahao/自动化科研/auto-academic fetch origin
+test "$(git -C /Users/huangjiahao/自动化科研/auto-academic rev-parse HEAD)" = "$(git -C /Users/huangjiahao/自动化科研/auto-academic rev-parse origin/main)"
 test -z "$(git -C /Users/huangjiahao/自动化科研/auto-academic status --porcelain=v1 --untracked-files=all)"
-mv /Users/huangjiahao/自动化科研/auto-academic /Users/huangjiahao/自动化科研/karpathy-autoresearch
 ```
 
-Expected: all preconditions exit 0; the clean upstream repository exists only at `karpathy-autoresearch` with unchanged origin and HEAD.
-
-- [ ] **Step 2: Clone the Workbench remote and create `main`**
-
-Run:
-
-```bash
-git clone https://github.com/zhouduichen/auto-academic.git /Users/huangjiahao/自动化科研/auto-academic
-git -C /Users/huangjiahao/自动化科研/auto-academic symbolic-ref HEAD refs/heads/main
-```
-
-Expected: clone warns that the repository is empty; local branch is `main`.
+Expected: all checks exit 0; the Workbench repository is on clean `main` and matches `origin/main`.
 
 - [ ] **Step 3: Write the failing package smoke test**
 

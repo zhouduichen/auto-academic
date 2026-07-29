@@ -34,7 +34,7 @@
 /Users/huangjiahao/自动化科研/auto-academic/       # 新建 Workbench 主仓库
 ```
 
-现有 `~/Projects/autoresearch-workbench` 是干净的 Karpathy 上游 clone。实施时先验证 origin、HEAD 和 clean 状态，再移动为 `~/Projects/karpathy-autoresearch`；随后在空出的原路径初始化新的 Workbench Git 仓库。移动不得改变上游 commit、分支或 origin。
+两个仓库已迁移到 `/Users/huangjiahao/自动化科研/` 下并作为固定的兄弟目录维护。`karpathy-autoresearch` 必须保持为 Karpathy 上游的干净 clone，固定 origin 和基线 commit；`auto-academic` 是独立的 Workbench 主仓库。后续操作只校验这两个最终位置，不再执行目录互换或覆盖式迁移。
 
 ### 3.2 Workbench 目录
 
@@ -322,4 +322,3 @@ pytest -q
 - Mac 断网后 Windows 状态和实验继续独立运行。
 
 只有两组完成定义都满足，才宣称达到原 MAC-P1 预期规划效果。
-
