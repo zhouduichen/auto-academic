@@ -35,6 +35,7 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
   "stage_a1: pinned inactive ARIS vendor snapshot gate",
+  "stage_a2: development-safe ARIS activation gate",
 ]
 
 [tool.ruff]
