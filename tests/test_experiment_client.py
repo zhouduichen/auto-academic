@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from hashlib import sha256
 
 import httpx
@@ -151,6 +152,31 @@ def test_write_retry_reuses_key() -> None:
     assert len(keys) == 2 and keys[0] == keys[1]
 
 
+def test_separate_write_calls_use_distinct_idempotency_keys() -> None:
+    keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/meta":
+            return httpx.Response(
+                200,
+                json={
+                    "api_version": "1.0",
+                    "request_id": "r",
+                    "server_version": "1",
+                    "minimum_client_version": "0.1.0",
+                    "features": ["experiments.submit"],
+                },
+            )
+        keys.append(request.headers["Idempotency-Key"])
+        return httpx.Response(201, json=envelope_data())
+
+    with ArwClient(settings(), transport=httpx.MockTransport(handler)) as client:
+        client.submit_experiment(submit_request())
+        client.submit_experiment(submit_request())
+    assert len(keys) == 2
+    assert keys[0] != keys[1]
+
+
 def test_get_retries_and_query_is_exact() -> None:
     calls = 0
 
@@ -193,6 +219,28 @@ def test_transport_failure_becomes_network_error() -> None:
     ) as client:
         with pytest.raises(NetworkError, match="unable to reach"):
             client.get_experiment("exp-1")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        lambda request: httpx.ConnectError("TLS certificate verify failed", request=request),
+        lambda request: httpx.ReadTimeout("read timed out", request=request),
+    ],
+)
+def test_tls_and_timeout_failures_are_safe_network_errors(
+    failure: Callable[[httpx.Request], httpx.RequestError],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise failure(request)
+
+    with ArwClient(
+        settings(), transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    ) as client:
+        with pytest.raises(NetworkError, match="unable to reach") as captured:
+            client.get_experiment("exp-1")
+    assert "certificate" not in str(captured.value).lower()
+    assert "timed out" not in str(captured.value).lower()
 
 
 def test_response_validation_is_strict() -> None:

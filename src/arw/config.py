@@ -1,4 +1,5 @@
 import os
+import re
 import stat
 from collections.abc import Mapping
 from pathlib import Path
@@ -10,6 +11,8 @@ from pydantic import Field, SecretStr, ValidationError, model_validator
 
 from arw.errors import ConfigError
 from arw.models import StrictModel
+
+REPLACEMENT_VALUE = "REPLACE"
 
 
 class Settings(StrictModel):
@@ -66,25 +69,64 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return loaded
 
 
+def _contains_plaintext_token(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key == "api_token" or _contains_plaintext_token(item) for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_plaintext_token(item) for item in value)
+    return False
+
+
+def _node_defaults(raw_node: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    if _contains_plaintext_token(raw_node):
+        raise ConfigError("ARW node configuration must not contain api_token")
+    raw_server = raw_node.get("server", {})
+    if not isinstance(raw_server, dict):
+        raise ConfigError("ARW node server configuration must be a mapping")
+    api_url = raw_server.get("api_url", "")
+    token_env = raw_server.get("token_env", "ARW_API_TOKEN")
+    if not isinstance(api_url, str):
+        raise ConfigError("ARW node api_url must be a string")
+    if not isinstance(token_env, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token_env):
+        raise ConfigError("ARW node token_env must name an environment variable")
+    values = {
+        key: raw_node[key]
+        for key in (
+            "ca_bundle",
+            "connect_timeout",
+            "read_timeout",
+            "artifact_read_timeout",
+        )
+        if key in raw_node
+    }
+    values["server"] = api_url
+    return values, token_env
+
+
 def load_settings(
     *, environ: Mapping[str, str] | None = None, home: Path | None = None
 ) -> Settings:
     environment = os.environ if environ is None else environ
     config_dir = (Path.home() if home is None else home) / ".config" / "arw"
-    values = _read_yaml(config_dir / "node.yaml")
+    values, token_env = _node_defaults(_read_yaml(config_dir / "node.yaml"))
     file_environment = _read_env_file(config_dir / "env")
-    env_keys = {
+    non_secret_env_keys = {
         "ARW_SERVER": "server",
-        "ARW_API_TOKEN": "api_token",
         "ARW_CA_BUNDLE": "ca_bundle",
         "ARW_CONNECT_TIMEOUT": "connect_timeout",
         "ARW_READ_TIMEOUT": "read_timeout",
         "ARW_ARTIFACT_READ_TIMEOUT": "artifact_read_timeout",
     }
     for source in (file_environment, environment):
-        for env_key, setting_key in env_keys.items():
+        for env_key, setting_key in non_secret_env_keys.items():
             if env_key in source:
                 values[setting_key] = source[env_key]
+    token = environment.get(token_env) or file_environment.get(token_env)
+    if not token or token == REPLACEMENT_VALUE:
+        raise ConfigError(f"{token_env} is missing or still uses the replacement value")
+    values["api_token"] = token
     try:
         return Settings.model_validate(values)
     except ValidationError as exc:

@@ -40,7 +40,7 @@ Test exact new paths, Bearer security, required idempotency header on both POSTs
 
 - [ ] **Step 2: Run red tests**
 
-Run: `uv run pytest tests/test_contract.py tests/test_experiment_contract.py -q`  
+Run: `uv run pytest tests/test_contract.py tests/test_experiment_contract.py -q`
 Expected: collection fails because experiment models do not exist.
 
 - [ ] **Step 3: Implement models and contract**
@@ -81,7 +81,7 @@ Change the old exact path equality test to assert the original five paths are a 
 
 - [ ] **Step 4: Run green tests and quality**
 
-Run: `uv run pytest tests/test_contract.py tests/test_experiment_contract.py -q && make quality`  
+Run: `uv run pytest tests/test_contract.py tests/test_experiment_contract.py -q && make quality`
 Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
@@ -108,7 +108,7 @@ Cover environment > `~/.config/arw/env` > node YAML precedence; env file must be
 
 - [ ] **Step 2: Run red tests**
 
-Run: `uv run pytest tests/test_config.py tests/test_errors.py -q`  
+Run: `uv run pytest tests/test_config.py tests/test_errors.py -q`
 Expected: collection fails because modules are absent.
 
 - [ ] **Step 3: Implement settings/errors**
@@ -155,7 +155,7 @@ Assert exact methods/paths/query/body; Authorization and `X-ARW-Client-Version`;
 
 - [ ] **Step 2: Run red tests**
 
-Run: `uv run pytest tests/test_experiment_client.py -q`  
+Run: `uv run pytest tests/test_experiment_client.py -q`
 Expected: collection fails because `ArwClient` is absent.
 
 - [ ] **Step 3: Implement `ArwClient`**
@@ -188,7 +188,7 @@ Cover valid streamed download; reject empty/absolute/nested/`..` names; reject d
 
 - [ ] **Step 2: Run red tests**
 
-Run: `uv run pytest tests/test_artifacts.py -q`  
+Run: `uv run pytest tests/test_artifacts.py -q`
 Expected: collection fails because downloader is absent.
 
 - [ ] **Step 3: Implement downloader**
@@ -223,7 +223,7 @@ Inject a fake `ArwClient` factory. Cover every command success, patch hash const
 
 - [ ] **Step 2: Run red tests**
 
-Run: `uv run pytest tests/test_cli_experiments.py tests/test_security.py -q`  
+Run: `uv run pytest tests/test_cli_experiments.py tests/test_security.py -q`
 Expected: commands are absent.
 
 - [ ] **Step 3: Implement output and CLI**
@@ -261,7 +261,7 @@ Expected: all targeted tests pass with no skip/xfailed.
 
 - [ ] **Step 2: Run full quality**
 
-Run: `make quality`  
+Run: `make quality`
 Expected: Ruff format/check, strict mypy, and the complete pytest suite pass.
 
 - [ ] **Step 3: Verify scope and cleanliness**

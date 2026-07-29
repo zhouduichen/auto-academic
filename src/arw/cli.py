@@ -103,7 +103,7 @@ def experiments_submit(
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(error.exit_code) from exc
     except ValidationError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter("invalid experiment submission") from exc
     response = _call(lambda client: client.submit_experiment(request))
     _emit(
         "experiment",
@@ -166,7 +166,7 @@ def experiments_cancel(
     try:
         request = ExperimentCancelRequest(reason=reason, expected_version=expected_version)
     except ValidationError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter("invalid experiment cancellation request") from exc
     response = _call(lambda client: client.cancel_experiment(experiment_id, request))
     _emit(
         "experiment",

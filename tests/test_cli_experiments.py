@@ -226,3 +226,38 @@ def test_invalid_utf8_patch_is_safe_config_error(tmp_path: Path, monkeypatch: ob
     assert result.exit_code == 2
     assert "unable to read" in result.stderr
     assert FakeClient.calls == []
+
+
+def test_validation_error_does_not_render_pydantic_input(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    install_fake(monkeypatch)
+    patch_file = tmp_path / "candidate.diff"
+    patch_file.write_text("", encoding="utf-8")
+    result = runner.invoke(
+        cli.app,
+        [
+            "experiments",
+            "submit",
+            str(patch_file),
+            "--project-id",
+            "p",
+            "--source-commit",
+            "a" * 40,
+            "--title",
+            "trial",
+            "--plan-id",
+            "plan",
+            "--seed",
+            "1",
+            "--time-budget",
+            "30",
+            "--max-parallel",
+            "1",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "invalid experiment submission" in result.stderr
+    assert "input_value" not in result.stderr
+    assert "validation error" not in result.stderr.lower()
+    assert FakeClient.calls == []
