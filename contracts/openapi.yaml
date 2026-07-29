@@ -112,6 +112,110 @@ paths:
                     status: waiting-approval
                     version: 3
                 next_cursor: null
+  /api/v1/experiments:
+    get:
+      operationId: listExperiments
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Experiment page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExperimentListResponse"}
+    post:
+      operationId: submitExperiment
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ExperimentSubmitRequest"}
+      responses:
+        "201":
+          description: Submitted experiment
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExperimentResponse"}
+  /api/v1/experiments/{experiment_id}:
+    get:
+      operationId: getExperiment
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Experiment detail
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExperimentResponse"}
+  /api/v1/experiments/{experiment_id}/events:
+    get:
+      operationId: listExperimentEvents
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Experiment event page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExperimentEventListResponse"}
+  /api/v1/experiments/{experiment_id}/cancel:
+    post:
+      operationId: cancelExperiment
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ExperimentCancelRequest"}
+      responses:
+        "200":
+          description: Cancelled experiment
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExperimentResponse"}
+  /api/v1/experiments/{experiment_id}/artifacts:
+    get:
+      operationId: getArtifactManifest
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+      responses:
+        "200":
+          description: Artifact manifest
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArtifactManifestResponse"}
+  /api/v1/experiments/{experiment_id}/artifacts/{artifact_id}/content:
+    get:
+      operationId: downloadArtifact
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/ExperimentId"
+        - $ref: "#/components/parameters/ArtifactId"
+      responses:
+        "200":
+          description: Artifact bytes from the configured origin
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
 components:
   securitySchemes:
     bearerAuth:
@@ -133,6 +237,21 @@ components:
       required: false
       schema:
         type: [string, "null"]
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, format: uuid}
+    ExperimentId:
+      name: experiment_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
   schemas:
     Envelope:
       type: object
@@ -254,3 +373,162 @@ components:
                 $ref: "#/components/schemas/TaskSummary"
             next_cursor:
               type: [string, "null"]
+    CandidatePatch:
+      type: object
+      additionalProperties: false
+      required: [patch_sha256, patch]
+      properties:
+        patch_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        patch: {type: string, minLength: 1, maxLength: 1000000}
+    ExperimentMatrix:
+      type: object
+      additionalProperties: false
+      required: [seeds, time_budget_seconds, max_parallel]
+      properties:
+        seeds:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items: {type: integer}
+        time_budget_seconds: {type: integer, minimum: 30, maximum: 3600}
+        max_parallel: {type: integer, minimum: 1, maximum: 8}
+    ExperimentSubmitRequest:
+      type: object
+      additionalProperties: false
+      required: [project_id, source_commit, title, plan_id, candidate, matrix]
+      properties:
+        project_id: {type: string, minLength: 1}
+        source_commit: {type: string, pattern: "^[0-9a-f]{40}$"}
+        title: {type: string, minLength: 1, maxLength: 200}
+        plan_id: {type: string, minLength: 1, maxLength: 100}
+        candidate: {$ref: "#/components/schemas/CandidatePatch"}
+        matrix: {$ref: "#/components/schemas/ExperimentMatrix"}
+    ExperimentCancelRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, expected_version]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 500}
+        expected_version: {type: integer, minimum: 1}
+    ExperimentSummary:
+      type: object
+      additionalProperties: false
+      required: [experiment_id, project_id, source_commit, title, state, version]
+      properties:
+        experiment_id: {type: string, minLength: 1}
+        project_id: {type: string, minLength: 1}
+        source_commit: {type: string, pattern: "^[0-9a-f]{40}$"}
+        title: {type: string, minLength: 1}
+        state:
+          type: string
+          enum: [submitted, policy-validating, waiting-approval, policy-rejected, queued, running, failed, succeeded, cancelled]
+        version: {type: integer, minimum: 1}
+    SafeError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string, minLength: 1}
+        message: {type: string, minLength: 1}
+    ExperimentResult:
+      type: object
+      additionalProperties: false
+      required: [summary, artifact_count]
+      properties:
+        summary: {type: string, minLength: 1}
+        artifact_count: {type: integer, minimum: 0}
+    ExperimentDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/ExperimentSummary"
+        - type: object
+          required: [plan_id, candidate_patch_sha256, matrix, result, error]
+          properties:
+            plan_id: {type: string, minLength: 1}
+            candidate_patch_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+            matrix: {$ref: "#/components/schemas/ExperimentMatrix"}
+            result:
+              anyOf:
+                - {$ref: "#/components/schemas/ExperimentResult"}
+                - {type: "null"}
+            error:
+              anyOf:
+                - {$ref: "#/components/schemas/SafeError"}
+                - {type: "null"}
+    ExperimentEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, experiment_id, version, event_type, occurred_at, state]
+      properties:
+        event_id: {type: string, minLength: 1}
+        experiment_id: {type: string, minLength: 1}
+        version: {type: integer, minimum: 1}
+        event_type: {type: string, minLength: 1}
+        occurred_at: {type: string, minLength: 1}
+        state: {$ref: "#/components/schemas/ExperimentSummary/properties/state"}
+    ArtifactEntry:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, filename, byte_size, sha256, media_type]
+      properties:
+        artifact_id: {type: string, minLength: 1}
+        filename: {type: string, minLength: 1}
+        byte_size: {type: integer, minimum: 0}
+        sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        media_type: {type: string, minLength: 1}
+    ExperimentResponse:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: "#/components/schemas/ExperimentDetail"}
+    ExperimentListResponse:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [items, next_cursor]
+          properties:
+            items:
+              type: array
+              items: {$ref: "#/components/schemas/ExperimentSummary"}
+            next_cursor: {type: [string, "null"]}
+    ExperimentEventListResponse:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [items, next_cursor]
+          properties:
+            items:
+              type: array
+              items: {$ref: "#/components/schemas/ExperimentEvent"}
+            next_cursor: {type: [string, "null"]}
+    ArtifactManifestResponse:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: {$ref: "#/components/schemas/ArtifactEntry"}
+    ErrorData:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string, minLength: 1}
+        message: {type: string, minLength: 1}
+    ErrorResponse:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [error]
+          properties:
+            error: {$ref: "#/components/schemas/ErrorData"}

