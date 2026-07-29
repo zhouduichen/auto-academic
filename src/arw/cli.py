@@ -6,6 +6,14 @@ from typing import Annotated
 import typer
 from pydantic import BaseModel, ValidationError
 
+from arw.aris_activation import (
+    install_profile,
+    load_capability_profile,
+    plan_install,
+    preflight,
+    run_profile,
+    uninstall_profile,
+)
 from arw.aris_vendor import create_snapshot, load_lock, verify_repo
 from arw.artifacts import download_artifact
 from arw.client import ArwClient
@@ -29,6 +37,9 @@ app.add_typer(experiments_app, name="experiments")
 CLIENT_FACTORY: Callable[[Settings], ArwClient] = ArwClient
 
 DEFAULT_LOCK = Path(__file__).resolve().parents[2] / "configs" / "integrations" / "aris.yaml"
+DEFAULT_PROFILE = (
+    Path(__file__).resolve().parents[2] / "configs" / "integrations" / "aris-capabilities.yaml"
+)
 
 
 @app.callback()
@@ -199,3 +210,80 @@ def experiments_artifacts(
     else:
         human = "\n".join(str(path) for path in paths)
     _emit("artifact-manifest", response, json_output=json_output, human=human)
+
+
+@aris_app.command("plan")
+def aris_plan(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)] = DEFAULT_LOCK,
+    profile_config: Annotated[
+        Path, typer.Option("--profile", exists=True, dir_okay=False)
+    ] = DEFAULT_PROFILE,
+) -> None:
+    lock = load_lock(config)
+    profile = load_capability_profile(profile_config)
+    typer.echo(plan_install(lock, profile, workspace.resolve()), nl=False)
+
+
+@aris_app.command("install")
+def aris_install(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)] = DEFAULT_LOCK,
+    profile_config: Annotated[
+        Path, typer.Option("--profile", exists=True, dir_okay=False)
+    ] = DEFAULT_PROFILE,
+) -> None:
+    if not confirm:
+        raise typer.BadParameter("--confirm is required to install the ARIS profile")
+    lock = load_lock(config)
+    profile = load_capability_profile(profile_config)
+    state = install_profile(lock, profile, workspace.resolve())
+    typer.echo(f"ARIS Stage A2 installed: {state.entry_count} managed entries")
+
+
+@aris_app.command("preflight")
+def aris_preflight(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)] = DEFAULT_LOCK,
+    profile_config: Annotated[
+        Path, typer.Option("--profile", exists=True, dir_okay=False)
+    ] = DEFAULT_PROFILE,
+) -> None:
+    lock = load_lock(config)
+    profile = load_capability_profile(profile_config)
+    state = preflight(lock, profile, workspace.resolve())
+    typer.echo(f"ARIS Stage A2 preflight OK: {state.entry_count} managed entries")
+
+
+@aris_app.command("uninstall")
+def aris_uninstall(
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    confirm: Annotated[bool, typer.Option("--confirm")] = False,
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)] = DEFAULT_LOCK,
+    profile_config: Annotated[
+        Path, typer.Option("--profile", exists=True, dir_okay=False)
+    ] = DEFAULT_PROFILE,
+) -> None:
+    if not confirm:
+        raise typer.BadParameter("--confirm is required to uninstall the ARIS profile")
+    lock = load_lock(config)
+    profile = load_capability_profile(profile_config)
+    uninstall_profile(lock, profile, workspace.resolve())
+    typer.echo("ARIS Stage A2 uninstalled; verified snapshots retained")
+
+
+@aris_app.command("run")
+def aris_run(
+    prompt: Annotated[str, typer.Argument(help="Task for the local Codex session")],
+    workspace: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    config: Annotated[Path, typer.Option(exists=True, dir_okay=False)] = DEFAULT_LOCK,
+    profile_config: Annotated[
+        Path, typer.Option("--profile", exists=True, dir_okay=False)
+    ] = DEFAULT_PROFILE,
+) -> None:
+    lock = load_lock(config)
+    profile = load_capability_profile(profile_config)
+    return_code = run_profile(lock, profile, workspace.resolve(), prompt)
+    if return_code:
+        raise typer.Exit(return_code)

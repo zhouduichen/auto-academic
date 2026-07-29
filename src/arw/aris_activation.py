@@ -702,3 +702,49 @@ def uninstall_profile(lock: ArisLock, profile: CapabilityProfile, workspace: Pat
             rules_path.unlink()
     _state_path(workspace).unlink()
     verify_activation_snapshot(lock, profile, workspace, snapshot)
+
+
+RUN_SAFETY_PREFIX = """AutoAcademic Stage A2 safety boundary (immutable):
+- Work only in this local development workspace with shell network access disabled.
+- Never invoke ssh, scp, rsync, screen, tmux, Modal, Vast/vastai, qzcli, or Tailscale.
+- Never start background execution, schedulers, detached sessions, experiments, or training.
+- Do not edit or delete .agents, .codex, activation snapshots, installer manifests,
+  or activation manifests/state.
+- Treat blocked ARIS skills reporting skill_not_activated as unavailable; do not work around them.
+
+User task:
+"""
+
+
+def run_profile(
+    lock: ArisLock,
+    profile: CapabilityProfile,
+    workspace: Path,
+    prompt: str,
+) -> int:
+    workspace = workspace.resolve()
+    preflight(lock, profile, workspace)
+    if shutil.which("codex") is None:
+        raise ArisActivationError("Codex CLI is not available on PATH")
+    argv = [
+        "codex",
+        "--strict-config",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "-c",
+        "sandbox_workspace_write.network_access=false",
+        "-c",
+        f'projects."{workspace}".trust_level="trusted"',
+        "--cd",
+        str(workspace),
+        RUN_SAFETY_PREFIX + prompt,
+    ]
+    try:
+        result = subprocess.run(argv, check=False)  # noqa: S603
+    except OSError as exc:
+        raise ArisActivationError(f"failed to launch local Codex CLI: {exc}") from exc
+    finally:
+        preflight(lock, profile, workspace)
+    return result.returncode

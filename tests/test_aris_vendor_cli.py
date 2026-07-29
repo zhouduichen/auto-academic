@@ -15,10 +15,8 @@ def test_snapshot_requires_confirmation(tmp_path: Path) -> None:
     assert "--confirm" in result.output
 
 
-def test_aris_cli_exposes_no_install_or_run() -> None:
+def test_aris_cli_preserves_a1_vendor_commands() -> None:
     result = runner.invoke(app, ["aris", "--help"])
     assert result.exit_code == 0
     assert "verify" in result.output
     assert "snapshot" in result.output
-    assert "install" not in result.output
-    assert "run" not in result.output
