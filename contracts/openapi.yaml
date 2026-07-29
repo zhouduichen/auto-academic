@@ -1,0 +1,251 @@
+openapi: 3.1.0
+info:
+  title: AutoResearch Workbench Control API
+  version: 1.0.0
+servers:
+  - url: https://autoresearch-5080:8443
+paths:
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Minimal health response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                api_version: "1.0"
+                request_id: req_1
+                status: ok
+  /api/v1/meta:
+    get:
+      operationId: meta
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Version and feature metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetaResponse"
+              example:
+                api_version: "1.0"
+                request_id: req_2
+                server_version: 0.1.0
+                minimum_client_version: 0.1.0
+                features: [projects.read, tasks.read]
+  /api/v1/status:
+    get:
+      operationId: status
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Workbench status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                api_version: "1.0"
+                request_id: req_3
+                data:
+                  node_id: autoresearch-5080
+                  state: ready
+                  active_tasks: 1
+                  waiting_approval: 2
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Project page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectListResponse"
+              example:
+                api_version: "1.0"
+                request_id: req_4
+                items:
+                  - project_id: karpathy-autoresearch
+                    name: Karpathy AutoResearch
+                    source_url: https://github.com/karpathy/autoresearch
+                    source_commit: 228791fb499afffb54b46200aca536f79142f117
+                    execution_platform: windows_cuda
+                next_cursor: null
+  /api/v1/tasks:
+    get:
+      operationId: listTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskListResponse"
+              example:
+                api_version: "1.0"
+                request_id: req_5
+                items:
+                  - task_id: task_1
+                    project_id: karpathy-autoresearch
+                    title: baseline
+                    status: waiting-approval
+                    version: 3
+                next_cursor: null
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: [string, "null"]
+  schemas:
+    Envelope:
+      type: object
+      required: [api_version, request_id]
+      properties:
+        api_version:
+          type: string
+          const: "1.0"
+        request_id:
+          type: string
+          minLength: 1
+    HealthResponse:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [ok, degraded]
+    MetaResponse:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [server_version, minimum_client_version, features]
+          properties:
+            server_version:
+              type: string
+            minimum_client_version:
+              type: string
+            features:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+    StatusData:
+      type: object
+      additionalProperties: false
+      required: [node_id, state, active_tasks, waiting_approval]
+      properties:
+        node_id:
+          type: string
+        state:
+          type: string
+          enum: [ready, degraded, stopped]
+        active_tasks:
+          type: integer
+          minimum: 0
+        waiting_approval:
+          type: integer
+          minimum: 0
+    StatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/StatusData"
+    ProjectSummary:
+      type: object
+      additionalProperties: false
+      required: [project_id, name, source_url, source_commit, execution_platform]
+      properties:
+        project_id:
+          type: string
+        name:
+          type: string
+        source_url:
+          type: string
+          format: uri
+        source_commit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        execution_platform:
+          type: string
+    ProjectListResponse:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [items, next_cursor]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProjectSummary"
+            next_cursor:
+              type: [string, "null"]
+    TaskSummary:
+      type: object
+      additionalProperties: false
+      required: [task_id, project_id, title, status, version]
+      properties:
+        task_id:
+          type: string
+        project_id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+    TaskListResponse:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [items, next_cursor]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/TaskSummary"
+            next_cursor:
+              type: [string, "null"]
