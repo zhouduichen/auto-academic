@@ -1,0 +1,10 @@
+project_id: karpathy-autoresearch
+adapter_type: autoresearch_v1
+source_url: https://github.com/karpathy/autoresearch
+source_commit: 228791fb499afffb54b46200aca536f79142f117
+execution_platform: windows_cuda
+mac_execution_allowed: false
+mutable_paths:
+  - train.py
+protected_paths:
+  - prepare.py
