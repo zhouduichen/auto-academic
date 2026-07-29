@@ -1,4 +1,4 @@
-.PHONY: format quality test test-integration
+.PHONY: format quality test test-integration test-server run-server
 
 format:
 	uv run ruff format .
@@ -15,3 +15,9 @@ test:
 
 test-integration:
 	ARW_RUN_STAGE_A2_INTEGRATION=1 uv run pytest tools/stage_a2_gate.py -q -v
+
+test-server:
+	uv run pytest tests/test_server.py -q -v
+
+run-server:
+	uv run arw-server
