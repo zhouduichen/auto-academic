@@ -30,8 +30,8 @@
 ### 3.1 仓库边界
 
 ```text
-~/Projects/karpathy-autoresearch/        # 干净的训练内核上游 clone
-~/Projects/autoresearch-workbench/       # 新建 Workbench 主仓库
+/Users/huangjiahao/自动化科研/karpathy-autoresearch/        # 干净的训练内核上游 clone
+/Users/huangjiahao/自动化科研/auto-academic/       # 新建 Workbench 主仓库
 ```
 
 现有 `~/Projects/autoresearch-workbench` 是干净的 Karpathy 上游 clone。实施时先验证 origin、HEAD 和 clean 状态，再移动为 `~/Projects/karpathy-autoresearch`；随后在空出的原路径初始化新的 Workbench Git 仓库。移动不得改变上游 commit、分支或 origin。
@@ -39,7 +39,7 @@
 ### 3.2 Workbench 目录
 
 ```text
-autoresearch-workbench/
+auto-academic/
 ├── pyproject.toml
 ├── uv.lock
 ├── Makefile

@@ -24,18 +24,18 @@
 ### Task 1: Repository migration and project foundation
 
 **Files:**
-- Move without editing: `/Users/huangjiahao/Projects/autoresearch-workbench` → `/Users/huangjiahao/Projects/karpathy-autoresearch`
-- Create repository: `/Users/huangjiahao/Projects/autoresearch-workbench`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/pyproject.toml`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/Makefile`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/README.md`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/__init__.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/__main__.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/cli.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/configs/projects/karpathy-autoresearch.yaml`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/tests/test_package.py`
-- Copy: design spec to `/Users/huangjiahao/Projects/autoresearch-workbench/docs/superpowers/specs/2026-07-29-autoresearch-workbench-control-plane-design.md`
-- Copy: this plan to `/Users/huangjiahao/Projects/autoresearch-workbench/docs/superpowers/plans/2026-07-29-arw-foundation-readonly-cli.md`
+- Move without editing: `/Users/huangjiahao/自动化科研/auto-academic` → `/Users/huangjiahao/自动化科研/karpathy-autoresearch`
+- Create repository: `/Users/huangjiahao/自动化科研/auto-academic`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/pyproject.toml`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/Makefile`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/README.md`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/__init__.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/__main__.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/cli.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/configs/projects/karpathy-autoresearch.yaml`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/tests/test_package.py`
+- Copy: design spec to `/Users/huangjiahao/自动化科研/auto-academic/docs/superpowers/specs/2026-07-29-autoresearch-workbench-control-plane-design.md`
+- Copy: this plan to `/Users/huangjiahao/自动化科研/auto-academic/docs/superpowers/plans/2026-07-29-arw-foundation-readonly-cli.md`
 
 **Interfaces:**
 - Consumes: clean upstream clone and empty GitHub repository.
@@ -46,11 +46,11 @@
 Run:
 
 ```bash
-test ! -e /Users/huangjiahao/Projects/karpathy-autoresearch
-test "$(git -C /Users/huangjiahao/Projects/autoresearch-workbench remote get-url origin)" = "https://github.com/karpathy/autoresearch"
-test "$(git -C /Users/huangjiahao/Projects/autoresearch-workbench rev-parse HEAD)" = "228791fb499afffb54b46200aca536f79142f117"
-test -z "$(git -C /Users/huangjiahao/Projects/autoresearch-workbench status --porcelain=v1 --untracked-files=all)"
-mv /Users/huangjiahao/Projects/autoresearch-workbench /Users/huangjiahao/Projects/karpathy-autoresearch
+test ! -e /Users/huangjiahao/自动化科研/karpathy-autoresearch
+test "$(git -C /Users/huangjiahao/自动化科研/auto-academic remote get-url origin)" = "https://github.com/karpathy/autoresearch"
+test "$(git -C /Users/huangjiahao/自动化科研/auto-academic rev-parse HEAD)" = "228791fb499afffb54b46200aca536f79142f117"
+test -z "$(git -C /Users/huangjiahao/自动化科研/auto-academic status --porcelain=v1 --untracked-files=all)"
+mv /Users/huangjiahao/自动化科研/auto-academic /Users/huangjiahao/自动化科研/karpathy-autoresearch
 ```
 
 Expected: all preconditions exit 0; the clean upstream repository exists only at `karpathy-autoresearch` with unchanged origin and HEAD.
@@ -60,8 +60,8 @@ Expected: all preconditions exit 0; the clean upstream repository exists only at
 Run:
 
 ```bash
-git clone https://github.com/zhouduichen/auto-academic.git /Users/huangjiahao/Projects/autoresearch-workbench
-git -C /Users/huangjiahao/Projects/autoresearch-workbench symbolic-ref HEAD refs/heads/main
+git clone https://github.com/zhouduichen/auto-academic.git /Users/huangjiahao/自动化科研/auto-academic
+git -C /Users/huangjiahao/自动化科研/auto-academic symbolic-ref HEAD refs/heads/main
 ```
 
 Expected: clone warns that the repository is empty; local branch is `main`.
@@ -76,7 +76,7 @@ def test_package_version() -> None:
     assert __version__ == "0.1.0"
 ```
 
-Run: `cd /Users/huangjiahao/Projects/autoresearch-workbench && python3 -m pytest tests/test_package.py -q`
+Run: `cd /Users/huangjiahao/自动化科研/auto-academic && python3 -m pytest tests/test_package.py -q`
 
 Expected: FAIL because the package and project environment do not exist.
 
@@ -251,9 +251,9 @@ Expected: quality PASS; initial commit pushed to `origin/main`.
 ### Task 2: Read-only OpenAPI contract and runtime models
 
 **Files:**
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/contracts/openapi.yaml`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/models.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/tests/test_contract.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/contracts/openapi.yaml`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/models.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/tests/test_contract.py`
 
 **Interfaces:**
 - Consumes: Python package from Task 1.
@@ -694,8 +694,8 @@ Expected: quality PASS; one focused contract commit.
 ### Task 3: Secure configuration loading
 
 **Files:**
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/config.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/tests/test_config.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/config.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/tests/test_config.py`
 
 **Interfaces:**
 - Consumes: `~/.config/arw/node.yaml`, `~/.config/arw/env`, and process environment.
@@ -877,9 +877,9 @@ Expected: tests and quality PASS; no secret values appear in output.
 ### Task 4: Read-only HTTP client, retry policy, and pagination
 
 **Files:**
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/errors.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/client.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/tests/test_client.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/errors.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/client.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/tests/test_client.py`
 
 **Interfaces:**
 - Consumes: `Settings` and response models.
@@ -1245,9 +1245,9 @@ Expected: retry, header, status mapping, pagination, and redaction tests PASS.
 ### Task 5: Stable output and read-only Typer commands
 
 **Files:**
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/output.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/cli.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/tests/test_cli_read.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/output.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/cli.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/tests/test_cli_read.py`
 
 **Interfaces:**
 - Consumes: `load_settings()`, `ArwClient`, and Pydantic models.
@@ -1567,9 +1567,9 @@ Expected: CLI tests and full quality PASS.
 ### Task 6: Local doctor and Slice 0–1 integration gate
 
 **Files:**
-- Modify: `/Users/huangjiahao/Projects/autoresearch-workbench/src/arw/cli.py`
-- Create: `/Users/huangjiahao/Projects/autoresearch-workbench/tests/test_doctor.py`
-- Modify: `/Users/huangjiahao/Projects/autoresearch-workbench/README.md`
+- Modify: `/Users/huangjiahao/自动化科研/auto-academic/src/arw/cli.py`
+- Create: `/Users/huangjiahao/自动化科研/auto-academic/tests/test_doctor.py`
+- Modify: `/Users/huangjiahao/自动化科研/auto-academic/README.md`
 
 **Interfaces:**
 - Consumes: config validation and read-only client.
@@ -1695,8 +1695,8 @@ uv run arw --help
 uv run arw projects --help
 uv run arw tasks --help
 git status --short
-git -C /Users/huangjiahao/Projects/karpathy-autoresearch status --short
-git -C /Users/huangjiahao/Projects/karpathy-autoresearch rev-parse HEAD
+git -C /Users/huangjiahao/自动化科研/karpathy-autoresearch status --short
+git -C /Users/huangjiahao/自动化科研/karpathy-autoresearch rev-parse HEAD
 ```
 
 Expected: quality PASS; all commands appear in help; only Task 6 changes are present before commit; upstream status is clean and HEAD remains `228791fb499afffb54b46200aca536f79142f117`.
