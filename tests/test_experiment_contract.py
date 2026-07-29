@@ -5,7 +5,12 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from arw.models import CandidatePatch, ExperimentDetail, ExperimentSubmitRequest
+from arw.models import (
+    CandidatePatch,
+    ExperimentCancelRequest,
+    ExperimentDetail,
+    ExperimentSubmitRequest,
+)
 
 CONTRACT = Path(__file__).parents[1] / "contracts" / "openapi.yaml"
 
@@ -30,6 +35,18 @@ def test_contract_has_stage_b_paths_and_write_guards() -> None:
             parameter.get("name") == "Idempotency-Key" and parameter["required"]
             for parameter in operation["parameters"]
         )
+
+
+def test_contract_write_examples_match_runtime_models() -> None:
+    paths = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))["paths"]
+    submit = paths["/api/v1/experiments"]["post"]["requestBody"]["content"]["application/json"][
+        "example"
+    ]
+    cancel = paths["/api/v1/experiments/{experiment_id}/cancel"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["example"]
+    ExperimentSubmitRequest.model_validate(submit)
+    ExperimentCancelRequest.model_validate(cancel)
 
 
 def test_submit_is_strict_and_hash_bound() -> None:

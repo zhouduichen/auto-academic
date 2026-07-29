@@ -99,7 +99,9 @@ def experiments_submit(
             ),
         )
     except (OSError, UnicodeError) as exc:
-        raise ConfigError("unable to read the UTF-8 patch file") from exc
+        error = ConfigError("unable to read the UTF-8 patch file")
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(error.exit_code) from exc
     except ValidationError as exc:
         raise typer.BadParameter(str(exc)) from exc
     response = _call(lambda client: client.submit_experiment(request))

@@ -138,6 +138,18 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/ExperimentSubmitRequest"}
+            example:
+              project_id: karpathy-autoresearch
+              source_commit: 228791fb499afffb54b46200aca536f79142f117
+              title: Try candidate patch
+              plan_id: plan-1
+              candidate:
+                patch_sha256: 2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881
+                patch: x
+              matrix:
+                seeds: [1]
+                time_budget_seconds: 300
+                max_parallel: 1
       responses:
         "201":
           description: Submitted experiment
@@ -185,6 +197,9 @@ paths:
         content:
           application/json:
             schema: {$ref: "#/components/schemas/ExperimentCancelRequest"}
+            example:
+              reason: Superseded by a newer candidate
+              expected_version: 3
       responses:
         "200":
           description: Cancelled experiment

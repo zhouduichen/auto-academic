@@ -34,6 +34,15 @@ def _client_version() -> str:
         return "0.1.0"
 
 
+def _version_key(value: str) -> tuple[int, int, int]:
+    core = value.split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    if not 1 <= len(parts) <= 3 or not all(part.isdigit() for part in parts):
+        raise ServerError("server returned an invalid minimum client version")
+    numbers = [int(part) for part in parts] + [0, 0]
+    return numbers[0], numbers[1], numbers[2]
+
+
 class ArwClient:
     def __init__(
         self,
@@ -136,7 +145,12 @@ class ArwClient:
         return self._get("/api/v1/meta", MetaResponse)
 
     def require_feature(self, feature: str) -> None:
-        if feature not in self.meta().features:
+        metadata = self.meta()
+        if _version_key(_client_version()) < _version_key(metadata.minimum_client_version):
+            raise ServerError(
+                f"server requires minimum client version {metadata.minimum_client_version}"
+            )
+        if feature not in metadata.features:
             raise ServerError(f"server does not advertise required feature: {feature}")
 
     def submit_experiment(self, request: ExperimentSubmitRequest) -> ExperimentResponse:

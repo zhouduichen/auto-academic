@@ -97,6 +97,28 @@ def test_missing_feature_sends_zero_writes() -> None:
     assert methods == ["GET"]
 
 
+def test_incompatible_minimum_version_sends_zero_writes() -> None:
+    methods: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        return httpx.Response(
+            200,
+            json={
+                "api_version": "1.0",
+                "request_id": "r",
+                "server_version": "1",
+                "minimum_client_version": "99.0.0",
+                "features": ["experiments.submit"],
+            },
+        )
+
+    with ArwClient(settings(), transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ServerError, match="minimum client version"):
+            client.submit_experiment(submit_request())
+    assert methods == ["GET"]
+
+
 def test_write_retry_reuses_key() -> None:
     keys: list[str] = []
     posts = 0
