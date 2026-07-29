@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Annotated, Literal
@@ -88,6 +89,22 @@ class ActivationManifest(BaseModel):
     blocked_adapter_version: Literal[1]
     forbidden_commands: tuple[str, ...]
     activation_tree_sha256: Sha256
+
+
+class ActivationState(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    vendor_profile_sha256: Sha256
+    capability_profile_sha256: Sha256
+    activation_snapshot: Path
+    activation_tree_sha256: Sha256
+    official_manifest_sha256: Sha256
+    deny_rules_sha256: Sha256
+    entry_count: Literal[82]
+    native_skills: tuple[str, ...]
+    blocked_skills: tuple[str, ...]
+    forbidden_commands: tuple[str, ...]
 
 
 def load_capability_profile(path: Path) -> CapabilityProfile:
@@ -309,3 +326,379 @@ def verify_activation_snapshot(
         raise ArisActivationError("activation manifest does not match the locked profile")
     _assert_read_only(snapshot)
     return actual
+
+
+def _sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _installer_argv(
+    installer: Path,
+    workspace: Path,
+    aris_repo: Path,
+    *options: str,
+) -> list[str]:
+    return [
+        "bash",
+        str(installer),
+        str(workspace),
+        "--aris-repo",
+        str(aris_repo),
+        *options,
+    ]
+
+
+def _run_installer(
+    argv: list[str], *, home: Path, capture_output: bool
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    try:
+        return subprocess.run(  # noqa: S603
+            argv,
+            check=True,
+            capture_output=capture_output,
+            text=True,
+            env=environment,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or getattr(exc, "stdout", "") or str(exc)
+        raise ArisActivationError(f"official ARIS installer failed: {str(detail).strip()}") from exc
+
+
+def _assert_managed_paths_safe(workspace: Path) -> None:
+    if not workspace.is_dir() or workspace.is_symlink():
+        raise ArisActivationError(f"workspace is not a real directory: {workspace}")
+    managed = (
+        workspace / ".aris",
+        workspace / ".aris" / "vendor",
+        workspace / ".aris" / "installed-skills-codex.txt",
+        workspace / ".aris" / "autoacademic-activation.json",
+        workspace / ".agents",
+        workspace / ".agents" / "skills",
+        workspace / ".codex",
+        workspace / ".codex" / "rules",
+        workspace / ".codex" / "rules" / "aris-deny.rules",
+    )
+    for path in managed:
+        if path.is_symlink():
+            raise ArisActivationError(f"managed activation path contains a symlink: {path}")
+    for path in managed:
+        if path.exists() and path.suffix == "" and not path.is_dir():
+            raise ArisActivationError(f"managed activation parent is not a directory: {path}")
+
+
+def _rules_bytes(profile: CapabilityProfile) -> bytes:
+    blocks = []
+    for command in profile.forbidden_commands:
+        blocks.append(
+            "prefix_rule(\n"
+            f'    pattern = ["{command}"],\n'
+            '    decision = "forbidden",\n'
+            '    justification = "Stage A2 forbids remote and external execution commands.",\n'
+            f'    match = ["{command} --help"],\n'
+            ")\n"
+        )
+    return (
+        "# AutoAcademic Stage A2 managed deny rules.\n"
+        "# Do not edit while ARIS activation is installed.\n\n" + "\n".join(blocks)
+    ).encode()
+
+
+def _check_rules_compatible(workspace: Path, profile: CapabilityProfile) -> None:
+    path = workspace / ".codex" / "rules" / "aris-deny.rules"
+    if path.exists() and (not path.is_file() or path.read_bytes() != _rules_bytes(profile)):
+        raise ArisActivationError(f"deny rules conflict with an existing file: {path}")
+
+
+def _write_rules(workspace: Path, profile: CapabilityProfile) -> Path:
+    _check_rules_compatible(workspace, profile)
+    path = workspace / ".codex" / "rules" / "aris-deny.rules"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_bytes(_rules_bytes(profile))
+    return path
+
+
+def plan_install(lock: ArisLock, profile: CapabilityProfile, workspace: Path) -> str:
+    _assert_managed_paths_safe(workspace)
+    _check_rules_compatible(workspace, profile)
+    expected_repo = workspace / ".aris" / "vendor" / "aris-activation" / profile.digest()
+    with tempfile.TemporaryDirectory(prefix="arw-aris-plan-") as temporary:
+        staging_workspace = Path(temporary)
+        activation = create_activation_snapshot(lock, profile, staging_workspace)
+        a1_snapshot = staging_workspace / ".aris" / "vendor" / "aris" / lock.digest()
+        installer = a1_snapshot / "tools" / "install_aris_codex.sh"
+        result = _run_installer(
+            _installer_argv(
+                installer,
+                workspace,
+                activation,
+                "--all",
+                "--no-doc",
+                "--dry-run",
+            ),
+            home=staging_workspace / "installer-home",
+            capture_output=True,
+        )
+        return result.stdout.replace(str(activation), str(expected_repo))
+
+
+def _parse_official_manifest(path: Path) -> tuple[dict[str, str], list[tuple[str, ...]]]:
+    if not path.is_file() or path.is_symlink():
+        raise ArisActivationError("official installer manifest is missing or not a regular file")
+    metadata: dict[str, str] = {}
+    rows: list[tuple[str, ...]] = []
+    in_body = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = tuple(line.split("\t"))
+        if fields == ("kind", "name", "source_rel", "target_rel", "mode"):
+            if in_body:
+                raise ArisActivationError("official installer manifest repeats its body header")
+            in_body = True
+        elif in_body:
+            if len(fields) != 5:
+                raise ArisActivationError("official installer manifest has an invalid body row")
+            rows.append(fields)
+        else:
+            if len(fields) != 2 or fields[0] in metadata:
+                raise ArisActivationError("official installer manifest has invalid metadata")
+            metadata[fields[0]] = fields[1]
+    if not in_body:
+        raise ArisActivationError("official installer manifest has no body header")
+    if set(metadata) != {"version", "repo_root", "project_root", "generated", "packages"}:
+        raise ArisActivationError(
+            "official installer manifest metadata is incomplete or unexpected"
+        )
+    return metadata, rows
+
+
+def _validate_official_install(
+    workspace: Path, activation: Path, profile: CapabilityProfile
+) -> tuple[str, int]:
+    manifest_path = workspace / ".aris" / "installed-skills-codex.txt"
+    metadata, rows = _parse_official_manifest(manifest_path)
+    expected_names = set(profile.native_skills) | set(profile.blocked_skills)
+    if metadata.get("version") != "1":
+        raise ArisActivationError("official installer manifest version is not 1")
+    if metadata.get("repo_root") != str(activation):
+        raise ArisActivationError(
+            "official installer manifest repo root is not the activation snapshot"
+        )
+    if metadata.get("project_root") != str(workspace):
+        raise ArisActivationError("official installer manifest project root is incorrect")
+    if metadata.get("packages") != "skills-codex":
+        raise ArisActivationError("official installer manifest package set is incorrect")
+    seen: set[str] = set()
+    for kind, name, source_rel, target_rel, mode in rows:
+        if name in seen:
+            raise ArisActivationError("official installer manifest contains a duplicate entry")
+        seen.add(name)
+        expected_kind = "support" if name == "shared-references" else "skill"
+        if name != "shared-references" and name not in expected_names:
+            raise ArisActivationError(f"official installer manifest contains unknown skill: {name}")
+        expected_source = f"skills/skills-codex/{name}"
+        expected_target_rel = f".agents/skills/{name}"
+        if (kind, source_rel, target_rel, mode) != (
+            expected_kind,
+            expected_source,
+            expected_target_rel,
+            "symlink",
+        ):
+            raise ArisActivationError(f"official installer manifest row is invalid: {name}")
+        target = workspace / target_rel
+        expected_target = activation / source_rel
+        if not target.is_symlink():
+            raise ArisActivationError(f"installed ARIS entry is not a symlink: {name}")
+        try:
+            actual_resolved = target.resolve(strict=True)
+            expected_resolved = expected_target.resolve(strict=True)
+        except OSError as exc:
+            raise ArisActivationError(f"installed ARIS entry has a broken target: {name}") from exc
+        if actual_resolved != expected_resolved:
+            raise ArisActivationError(f"installed ARIS entry targets the wrong snapshot: {name}")
+    if seen != expected_names | {"shared-references"}:
+        raise ArisActivationError("official installer manifest is not the exact 82-entry inventory")
+    if len(rows) != ACTIVATION_ENTRY_COUNT:
+        raise ArisActivationError("official installer manifest does not contain 82 entries")
+    return _sha256_bytes(manifest_path.read_bytes()), len(rows)
+
+
+def _state_path(workspace: Path) -> Path:
+    return workspace / ".aris" / "autoacademic-activation.json"
+
+
+def _expected_state(
+    lock: ArisLock,
+    profile: CapabilityProfile,
+    snapshot: Path,
+    activation_manifest: ActivationManifest,
+    official_manifest_sha256: str,
+    rules_sha256: str,
+) -> ActivationState:
+    return ActivationState(
+        schema_version=1,
+        vendor_profile_sha256=lock.digest(),
+        capability_profile_sha256=profile.digest(),
+        activation_snapshot=snapshot,
+        activation_tree_sha256=activation_manifest.activation_tree_sha256,
+        official_manifest_sha256=official_manifest_sha256,
+        deny_rules_sha256=rules_sha256,
+        entry_count=ACTIVATION_ENTRY_COUNT,
+        native_skills=profile.native_skills,
+        blocked_skills=profile.blocked_skills,
+        forbidden_commands=profile.forbidden_commands,
+    )
+
+
+def _load_state(workspace: Path) -> ActivationState:
+    path = _state_path(workspace)
+    if not path.is_file() or path.is_symlink():
+        raise ArisActivationError("ARIS activation state is missing or not a regular file")
+    try:
+        return ActivationState.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as exc:
+        raise ArisActivationError("ARIS activation state is invalid") from exc
+
+
+def _write_state(workspace: Path, state: ActivationState) -> None:
+    path = _state_path(workspace)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(state.model_dump_json() + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _rollback_install(installer: Path, workspace: Path, a1_snapshot: Path, home: Path) -> None:
+    try:
+        _run_installer(
+            _installer_argv(
+                installer,
+                workspace,
+                a1_snapshot,
+                "--uninstall",
+                "--quiet",
+                "--no-doc",
+            ),
+            home=home,
+            capture_output=True,
+        )
+    except ArisActivationError:
+        pass
+
+
+def install_profile(lock: ArisLock, profile: CapabilityProfile, workspace: Path) -> ActivationState:
+    _assert_managed_paths_safe(workspace)
+    _check_rules_compatible(workspace, profile)
+    state_path = _state_path(workspace)
+    manifest_path = workspace / ".aris" / "installed-skills-codex.txt"
+    if state_path.exists() or state_path.is_symlink():
+        return preflight(lock, profile, workspace)
+    if manifest_path.exists() or manifest_path.is_symlink():
+        raise ArisActivationError("an unmanaged ARIS installer manifest already exists")
+    snapshot = create_activation_snapshot(lock, profile, workspace)
+    activation_manifest = verify_activation_snapshot(lock, profile, workspace, snapshot)
+    a1_snapshot = workspace / ".aris" / "vendor" / "aris" / lock.digest()
+    installer = a1_snapshot / "tools" / "install_aris_codex.sh"
+    home = workspace / ".aris" / "installer-home"
+    home.mkdir(parents=True, exist_ok=True)
+    installed = False
+    rules_path: Path | None = None
+    try:
+        _run_installer(
+            _installer_argv(
+                installer,
+                workspace,
+                snapshot,
+                "--all",
+                "--quiet",
+                "--no-doc",
+            ),
+            home=home,
+            capture_output=True,
+        )
+        installed = True
+        official_sha256, _ = _validate_official_install(workspace, snapshot, profile)
+        rules_path = _write_rules(workspace, profile)
+        rules_sha256 = _sha256_bytes(rules_path.read_bytes())
+        state = _expected_state(
+            lock,
+            profile,
+            snapshot,
+            activation_manifest,
+            official_sha256,
+            rules_sha256,
+        )
+        _write_state(workspace, state)
+        return preflight(lock, profile, workspace)
+    except Exception:
+        if installed or manifest_path.is_file():
+            _rollback_install(installer, workspace, a1_snapshot, home)
+        _state_path(workspace).unlink(missing_ok=True)
+        if rules_path is not None and rules_path.is_file():
+            if rules_path.read_bytes() == _rules_bytes(profile):
+                rules_path.unlink()
+        raise
+
+
+def preflight(lock: ArisLock, profile: CapabilityProfile, workspace: Path) -> ActivationState:
+    _assert_managed_paths_safe(workspace)
+    snapshot = workspace / ".aris" / "vendor" / "aris-activation" / profile.digest()
+    activation_manifest = verify_activation_snapshot(lock, profile, workspace, snapshot)
+    official_sha256, _ = _validate_official_install(workspace, snapshot, profile)
+    rules_path = workspace / ".codex" / "rules" / "aris-deny.rules"
+    if not rules_path.is_file() or rules_path.is_symlink():
+        raise ArisActivationError("Stage A2 deny rules are missing or not a regular file")
+    rules = rules_path.read_bytes()
+    if rules != _rules_bytes(profile):
+        raise ArisActivationError("Stage A2 deny rules do not match the profile")
+    expected = _expected_state(
+        lock,
+        profile,
+        snapshot,
+        activation_manifest,
+        official_sha256,
+        _sha256_bytes(rules),
+    )
+    actual = _load_state(workspace)
+    if actual != expected:
+        raise ArisActivationError("ARIS activation state does not match the installed profile")
+    return actual
+
+
+def uninstall_profile(lock: ArisLock, profile: CapabilityProfile, workspace: Path) -> None:
+    _assert_managed_paths_safe(workspace)
+    snapshot = workspace / ".aris" / "vendor" / "aris-activation" / profile.digest()
+    activation_manifest = verify_activation_snapshot(lock, profile, workspace, snapshot)
+    official_sha256, _ = _validate_official_install(workspace, snapshot, profile)
+    state = _load_state(workspace)
+    expected_state = _expected_state(
+        lock,
+        profile,
+        snapshot,
+        activation_manifest,
+        official_sha256,
+        _sha256_bytes(_rules_bytes(profile)),
+    )
+    if state != expected_state:
+        raise ArisActivationError("ARIS activation state does not match the installed profile")
+    a1_snapshot = workspace / ".aris" / "vendor" / "aris" / lock.digest()
+    installer = a1_snapshot / "tools" / "install_aris_codex.sh"
+    home = workspace / ".aris" / "installer-home"
+    _run_installer(
+        _installer_argv(
+            installer,
+            workspace,
+            a1_snapshot,
+            "--uninstall",
+            "--quiet",
+            "--no-doc",
+        ),
+        home=home,
+        capture_output=True,
+    )
+    rules_path = workspace / ".codex" / "rules" / "aris-deny.rules"
+    if rules_path.is_file() and not rules_path.is_symlink():
+        if _sha256_bytes(rules_path.read_bytes()) == state.deny_rules_sha256:
+            rules_path.unlink()
+    _state_path(workspace).unlink()
+    verify_activation_snapshot(lock, profile, workspace, snapshot)

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -8,10 +9,15 @@ import pytest
 import arw.aris_activation as activation
 from arw.aris_activation import (
     ADAPTER_MARKER,
+    ActivationState,
     ArisActivationError,
     CapabilityProfile,
     create_activation_snapshot,
+    install_profile,
     load_capability_profile,
+    plan_install,
+    preflight,
+    uninstall_profile,
     verify_activation_snapshot,
     verify_capability_profile,
 )
@@ -130,6 +136,7 @@ def _activation_fixture(
             executable.chmod(0o755)
     for relative in (
         "skills/shared-references/reference.md",
+        "skills/skills-codex/shared-references/reference.md",
         "tools/install_aris_codex.sh",
         "templates/template.md",
         "docs/guide.md",
@@ -224,3 +231,220 @@ def test_activation_snapshot_rejects_tampering(
 
     with pytest.raises(ArisActivationError):
         verify_activation_snapshot(lock, profile, workspace, snapshot)
+
+
+def _official_manifest(workspace: Path, repo: Path, profile: CapabilityProfile) -> bytes:
+    lines = [
+        "version\t1",
+        f"repo_root\t{repo}",
+        f"project_root\t{workspace}",
+        "generated\t2026-07-29T00:00:00Z",
+        "packages\tskills-codex",
+        "kind\tname\tsource_rel\ttarget_rel\tmode",
+    ]
+    names = sorted((*profile.native_skills, *profile.blocked_skills, "shared-references"))
+    for name in names:
+        kind = "support" if name == "shared-references" else "skill"
+        lines.append(f"{kind}\t{name}\tskills/skills-codex/{name}\t.agents/skills/{name}\tsymlink")
+    return ("\n".join(lines) + "\n").encode()
+
+
+def _mock_official_installer(
+    monkeypatch: pytest.MonkeyPatch, profile: CapabilityProfile
+) -> list[tuple[list[str], dict[str, object]]]:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        workspace = Path(argv[2])
+        repo = Path(argv[argv.index("--aris-repo") + 1])
+        if "--dry-run" in argv:
+            return subprocess.CompletedProcess(argv, 0, "Plan summary:\n  CREATE: 82\n", "")
+        manifest = workspace / ".aris" / "installed-skills-codex.txt"
+        if "--uninstall" in argv:
+            if manifest.exists():
+                for name in (*profile.native_skills, *profile.blocked_skills, "shared-references"):
+                    (workspace / ".agents" / "skills" / name).unlink(missing_ok=True)
+                manifest.replace(manifest.with_suffix(".txt.prev"))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        skills = workspace / ".agents" / "skills"
+        skills.mkdir(parents=True, exist_ok=True)
+        for name in (*profile.native_skills, *profile.blocked_skills, "shared-references"):
+            (skills / name).symlink_to(repo / "skills" / "skills-codex" / name)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_bytes(_official_manifest(workspace, repo, profile))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(activation.subprocess, "run", run)
+    return calls
+
+
+def test_plan_uses_official_dry_run_without_mutating_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    source = workspace / ".aris" / "vendor" / "aris" / lock.digest()
+    for path in tuple(workspace.iterdir()):
+        if path.name == ".aris":
+            path.rename(tmp_path / "fixture-aris")
+    monkeypatch.setattr(activation, "create_activation_snapshot", lambda *_: source)
+    calls = _mock_official_installer(monkeypatch, profile)
+
+    output = plan_install(lock, profile, workspace)
+
+    assert "CREATE: 82" in output
+    assert not any(workspace.iterdir())
+    argv, _ = calls[0]
+    assert argv[:3] == ["bash", argv[1], str(workspace)]
+    assert argv[-3:] == ["--all", "--no-doc", "--dry-run"]
+    assert "--quiet" not in argv
+
+
+def _installed_fixture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[
+    ArisLock, CapabilityProfile, Path, ActivationState, list[tuple[list[str], dict[str, object]]]
+]:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    calls = _mock_official_installer(monkeypatch, profile)
+    state = install_profile(lock, profile, workspace)
+    return lock, profile, workspace, state, calls
+
+
+def test_install_and_preflight_require_exact_official_82_entry_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace, state, calls = _installed_fixture(monkeypatch, tmp_path)
+
+    assert preflight(lock, profile, workspace) == state
+    assert state.entry_count == 82
+    assert len(state.native_skills) == 68
+    assert len(state.blocked_skills) == 13
+    argv, kwargs = calls[0]
+    snapshot = workspace / ".aris" / "vendor" / "aris-activation" / profile.digest()
+    assert argv == [
+        "bash",
+        str(
+            workspace
+            / ".aris"
+            / "vendor"
+            / "aris"
+            / lock.digest()
+            / "tools"
+            / "install_aris_codex.sh"
+        ),
+        str(workspace),
+        "--aris-repo",
+        str(snapshot),
+        "--all",
+        "--quiet",
+        "--no-doc",
+    ]
+    assert Path(kwargs["env"]["HOME"]) == workspace / ".aris" / "installer-home"  # type: ignore[index]
+    rules = (workspace / ".codex" / "rules" / "aris-deny.rules").read_text(encoding="utf-8")
+    assert all(f'pattern = ["{command}"]' in rules for command in profile.forbidden_commands)
+
+
+@pytest.mark.parametrize("tamper", ["missing", "retargeted", "real-path", "extra-manifest"])
+def test_preflight_rejects_installed_entry_drift(
+    tamper: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace, _, _ = _installed_fixture(monkeypatch, tmp_path)
+    target = workspace / ".agents" / "skills" / profile.native_skills[0]
+    if tamper == "missing":
+        target.unlink()
+    elif tamper == "retargeted":
+        target.unlink()
+        target.symlink_to(workspace / ".aris" / "vendor" / "aris" / lock.digest())
+    elif tamper == "real-path":
+        target.unlink()
+        target.mkdir()
+    else:
+        manifest = workspace / ".aris" / "installed-skills-codex.txt"
+        with manifest.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "skill\tunexpected\tskills/skills-codex/unexpected\t"
+                ".agents/skills/unexpected\tsymlink\n"
+            )
+
+    with pytest.raises(ArisActivationError):
+        preflight(lock, profile, workspace)
+
+
+def test_install_rolls_back_with_official_uninstall_after_postcheck_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    calls = _mock_official_installer(monkeypatch, profile)
+    monkeypatch.setattr(
+        activation,
+        "_write_rules",
+        lambda *_: (_ for _ in ()).throw(ArisActivationError("forced postcheck failure")),
+    )
+
+    with pytest.raises(ArisActivationError, match="forced postcheck"):
+        install_profile(lock, profile, workspace)
+
+    assert len(calls) == 2
+    assert "--uninstall" in calls[1][0]
+    assert not (workspace / ".aris" / "installed-skills-codex.txt").exists()
+    assert not any((workspace / ".agents" / "skills").iterdir())
+
+
+def test_uninstall_uses_a1_installer_and_preserves_user_content(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace, _, calls = _installed_fixture(monkeypatch, tmp_path)
+    user_file = workspace / ".agents" / "skills" / "user-skill.txt"
+    user_file.write_text("keep\n", encoding="utf-8")
+    research = workspace / "research.txt"
+    research.write_text("keep\n", encoding="utf-8")
+
+    uninstall_profile(lock, profile, workspace)
+
+    argv, _ = calls[-1]
+    a1_snapshot = workspace / ".aris" / "vendor" / "aris" / lock.digest()
+    assert argv[3:] == [
+        "--aris-repo",
+        str(a1_snapshot),
+        "--uninstall",
+        "--quiet",
+        "--no-doc",
+    ]
+    assert user_file.read_text(encoding="utf-8") == "keep\n"
+    assert research.read_text(encoding="utf-8") == "keep\n"
+    assert a1_snapshot.is_dir()
+    assert (workspace / ".aris" / "vendor" / "aris-activation" / profile.digest()).is_dir()
+    assert not (workspace / ".codex" / "rules" / "aris-deny.rules").exists()
+    assert not (workspace / ".aris" / "autoacademic-activation.json").exists()
+
+
+def test_uninstall_preserves_modified_deny_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace, _, _ = _installed_fixture(monkeypatch, tmp_path)
+    rules = workspace / ".codex" / "rules" / "aris-deny.rules"
+    rules.write_text("user replacement\n", encoding="utf-8")
+
+    uninstall_profile(lock, profile, workspace)
+
+    assert rules.read_text(encoding="utf-8") == "user replacement\n"
+    assert not (workspace / ".aris" / "autoacademic-activation.json").exists()
+
+
+@pytest.mark.parametrize(
+    "relative", [".aris", ".agents", ".agents/skills", ".codex", ".codex/rules"]
+)
+def test_install_rejects_symlinked_managed_parents(relative: str, tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    target = workspace / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(outside, target_is_directory=True)
+    lock = load_lock(LOCK)
+    profile = load_capability_profile(PROFILE)
+
+    with pytest.raises(ArisActivationError, match="symlink"):
+        install_profile(lock, profile, workspace)
