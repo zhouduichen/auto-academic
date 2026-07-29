@@ -36,6 +36,7 @@ testpaths = ["tests"]
 markers = [
   "stage_a1: pinned inactive ARIS vendor snapshot gate",
   "stage_a2: development-safe ARIS activation gate",
+  "stage_a2_integration: real ARIS installer lifecycle gate (requires ARW_RUN_STAGE_A2_INTEGRATION=1)",
 ]
 
 [tool.ruff]
@@ -47,6 +48,7 @@ select = ["E", "F", "I", "UP", "B", "S", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S105", "S106"]
+"tools/**/*.py" = ["S101", "S603", "S607"]
 
 [tool.mypy]
 python_version = "3.12"

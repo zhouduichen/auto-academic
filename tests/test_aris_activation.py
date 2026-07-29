@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -103,6 +104,13 @@ def test_profile_digest_hashes_canonical_json() -> None:
 def _remove_write_bits(root: Path) -> None:
     for path in (root, *root.rglob("*")):
         path.chmod(path.stat().st_mode & ~0o222)
+
+
+def _remove_readonly(root: Path) -> None:
+    for path in (root, *root.rglob("*")):
+        if path.is_file() or (path.is_dir() and not path.is_symlink()):
+            path.chmod(path.stat().st_mode | stat.S_IWRITE)
+    shutil.rmtree(str(root))
 
 
 def _activation_fixture(
@@ -448,3 +456,114 @@ def test_install_rejects_symlinked_managed_parents(relative: str, tmp_path: Path
 
     with pytest.raises(ArisActivationError, match="symlink"):
         install_profile(lock, profile, workspace)
+
+
+# ── Blocker 1 red-team: installer-home symlink escape ──
+
+
+@pytest.mark.parametrize(
+    "symlink_target",
+    [
+        ".aris/installer-home",
+        ".aris/installer-home/.aris",
+        ".aris/vendor/aris",
+        ".aris/vendor/aris-activation",
+        ".aris/installed-skills-codex.txt.prev",
+    ],
+)
+def test_install_rejects_symlinked_managed_paths(
+    symlink_target: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    target = workspace / symlink_target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The A1 fixture may have already created some managed paths as real
+    # directories; remove them so we can replace them with a symlink.
+    if target.is_dir() and not target.is_symlink():
+        _remove_readonly(target)
+    elif target.exists() or target.is_symlink():
+        target.unlink()
+    # For file-like paths, create a symlink to a regular file; for dirs, symlink to outside
+    if target.suffix != "":
+        outside_file = tmp_path / "outside.txt"
+        outside_file.write_text("escaped\n", encoding="utf-8")
+        target.symlink_to(outside_file)
+    else:
+        outside_dir = tmp_path / "outside-dir"
+        outside_dir.mkdir()
+        target.symlink_to(outside_dir, target_is_directory=True)
+
+    with pytest.raises(ArisActivationError, match="symlink"):
+        install_profile(lock, profile, workspace)
+
+
+def test_install_rejects_managed_file_path_that_is_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    # installed-skills-codex.txt should be a regular file, not a directory
+    manifest_dir = workspace / ".aris" / "installed-skills-codex.txt"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(ArisActivationError, match="expected a regular file"):
+        install_profile(lock, profile, workspace)
+
+
+def test_install_rejects_managed_dir_path_that_is_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    # .aris should be a directory, not a file
+    aris_dir = workspace / ".aris"
+    if aris_dir.is_dir() and not aris_dir.is_symlink():
+        _remove_readonly(aris_dir)
+    elif aris_dir.exists() or aris_dir.is_symlink():
+        aris_dir.unlink()
+    aris_dir.write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(ArisActivationError, match="expected a directory"):
+        install_profile(lock, profile, workspace)
+
+
+# ── Blocker 2 red-team: rollback double-failure ──
+
+
+def test_install_aggregates_install_and_rollback_errors_and_preserves_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock, profile, workspace = _activation_fixture(monkeypatch, tmp_path)
+    first = True
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal first
+        if first:
+            first = False
+            workspace_path = Path(argv[2])
+            repo = Path(argv[argv.index("--aris-repo") + 1])
+            manifest = workspace_path / ".aris" / "installed-skills-codex.txt"
+            skills = workspace_path / ".agents" / "skills"
+            skills.mkdir(parents=True, exist_ok=True)
+            skills_name = (*profile.native_skills, *profile.blocked_skills, "shared-references")
+            for name in skills_name:
+                (skills / name).symlink_to(repo / "skills" / "skills-codex" / name)
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_bytes(_official_manifest(workspace_path, repo, profile))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        # rollback call — also fails
+        raise OSError("simulated rollback crash")
+
+    monkeypatch.setattr(activation.subprocess, "run", run)
+    monkeypatch.setattr(
+        activation,
+        "_write_rules",
+        lambda *_: (_ for _ in ()).throw(ArisActivationError("forced postcheck failure")),
+    )
+
+    with pytest.raises(ArisActivationError, match="rollback also failed"):
+        install_profile(lock, profile, workspace)
+
+    # Diagnostics must be preserved after double-failure
+    manifest_path = workspace / ".aris" / "installed-skills-codex.txt"
+    assert manifest_path.is_file(), "official manifest must be preserved for diagnosis"
+    skills_dir = workspace / ".agents" / "skills"
+    assert any(skills_dir.iterdir()), "symlinks must be preserved for diagnosis"

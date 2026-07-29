@@ -372,7 +372,12 @@ def _assert_managed_paths_safe(workspace: Path) -> None:
     managed = (
         workspace / ".aris",
         workspace / ".aris" / "vendor",
+        workspace / ".aris" / "vendor" / "aris",
+        workspace / ".aris" / "vendor" / "aris-activation",
+        workspace / ".aris" / "installer-home",
+        workspace / ".aris" / "installer-home" / ".aris",
         workspace / ".aris" / "installed-skills-codex.txt",
+        workspace / ".aris" / "installed-skills-codex.txt.prev",
         workspace / ".aris" / "autoacademic-activation.json",
         workspace / ".agents",
         workspace / ".agents" / "skills",
@@ -384,8 +389,17 @@ def _assert_managed_paths_safe(workspace: Path) -> None:
         if path.is_symlink():
             raise ArisActivationError(f"managed activation path contains a symlink: {path}")
     for path in managed:
-        if path.exists() and path.suffix == "" and not path.is_dir():
-            raise ArisActivationError(f"managed activation parent is not a directory: {path}")
+        if not path.exists():
+            continue
+        if path.suffix == "":
+            if not path.is_dir():
+                raise ArisActivationError(
+                    f"managed activation path expected a directory but is not: {path}"
+                )
+        elif not path.is_file():
+            raise ArisActivationError(
+                f"managed activation path expected a regular file but is not: {path}"
+            )
 
 
 def _rules_bytes(profile: CapabilityProfile) -> bytes:
@@ -569,21 +583,18 @@ def _write_state(workspace: Path, state: ActivationState) -> None:
 
 
 def _rollback_install(installer: Path, workspace: Path, a1_snapshot: Path, home: Path) -> None:
-    try:
-        _run_installer(
-            _installer_argv(
-                installer,
-                workspace,
-                a1_snapshot,
-                "--uninstall",
-                "--quiet",
-                "--no-doc",
-            ),
-            home=home,
-            capture_output=True,
-        )
-    except ArisActivationError:
-        pass
+    _run_installer(
+        _installer_argv(
+            installer,
+            workspace,
+            a1_snapshot,
+            "--uninstall",
+            "--quiet",
+            "--no-doc",
+        ),
+        home=home,
+        capture_output=True,
+    )
 
 
 def install_profile(lock: ArisLock, profile: CapabilityProfile, workspace: Path) -> ActivationState:
@@ -630,9 +641,19 @@ def install_profile(lock: ArisLock, profile: CapabilityProfile, workspace: Path)
         )
         _write_state(workspace, state)
         return preflight(lock, profile, workspace)
-    except Exception:
+    except Exception as install_error:
+        rollback_error: Exception | None = None
         if installed or manifest_path.is_file():
-            _rollback_install(installer, workspace, a1_snapshot, home)
+            try:
+                _rollback_install(installer, workspace, a1_snapshot, home)
+            except Exception as rb_err:
+                rollback_error = rb_err
+        if rollback_error is not None:
+            raise ArisActivationError(
+                "installation failed and rollback also failed: "
+                "manifest, symlinks, and deny rules have been preserved for diagnosis. "
+                f"Install error: {install_error}. Rollback error: {rollback_error}."
+            ) from install_error
         _state_path(workspace).unlink(missing_ok=True)
         if rules_path is not None and rules_path.is_file():
             if rules_path.read_bytes() == _rules_bytes(profile):
