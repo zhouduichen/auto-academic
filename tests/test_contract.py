@@ -1,6 +1,8 @@
 from pathlib import Path
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from arw.models import (
     HealthResponse,
@@ -23,6 +25,23 @@ def test_contract_defines_read_only_paths() -> None:
         "/api/v1/projects",
         "/api/v1/tasks",
     }
+
+
+def test_contract_forbids_unevaluated_and_additional_properties() -> None:
+    document = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    schemas = document["components"]["schemas"]
+
+    for name in (
+        "HealthResponse",
+        "MetaResponse",
+        "StatusResponse",
+        "ProjectListResponse",
+        "TaskListResponse",
+    ):
+        assert schemas[name]["unevaluatedProperties"] is False
+
+    for name in ("StatusData", "ProjectSummary", "TaskSummary"):
+        assert schemas[name]["additionalProperties"] is False
 
 
 def test_models_accept_contract_examples() -> None:
@@ -80,3 +99,42 @@ def test_models_accept_contract_examples() -> None:
             "next_cursor": None,
         }
     )
+
+
+def test_list_models_require_next_cursor() -> None:
+    with pytest.raises(ValidationError, match="next_cursor"):
+        ProjectListResponse.model_validate(
+            {"api_version": "1.0", "request_id": "req_projects", "items": []}
+        )
+
+    with pytest.raises(ValidationError, match="next_cursor"):
+        TaskListResponse.model_validate(
+            {"api_version": "1.0", "request_id": "req_tasks", "items": []}
+        )
+
+
+def test_models_reject_extra_fields() -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        HealthResponse.model_validate(
+            {
+                "api_version": "1.0",
+                "request_id": "req_health",
+                "status": "ok",
+                "secret": "must-not-pass",
+            }
+        )
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        StatusResponse.model_validate(
+            {
+                "api_version": "1.0",
+                "request_id": "req_status",
+                "data": {
+                    "node_id": "autoresearch-5080",
+                    "state": "ready",
+                    "active_tasks": 0,
+                    "waiting_approval": 0,
+                    "secret": "must-not-pass",
+                },
+            }
+        )

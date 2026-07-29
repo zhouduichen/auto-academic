@@ -43,7 +43,7 @@ class ProjectSummary(StrictModel):
 
 class ProjectListResponse(Envelope):
     items: list[ProjectSummary]
-    next_cursor: str | None = None
+    next_cursor: str | None
 
 
 class TaskSummary(StrictModel):
@@ -56,4 +56,4 @@ class TaskSummary(StrictModel):
 
 class TaskListResponse(Envelope):
     items: list[TaskSummary]
-    next_cursor: str | None = None
+    next_cursor: str | None

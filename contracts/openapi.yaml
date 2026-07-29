@@ -145,6 +145,7 @@ components:
           type: string
           minLength: 1
     HealthResponse:
+      unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/Envelope"
         - type: object
@@ -154,6 +155,7 @@ components:
               type: string
               enum: [ok, degraded]
     MetaResponse:
+      unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/Envelope"
         - type: object
@@ -185,6 +187,7 @@ components:
           type: integer
           minimum: 0
     StatusResponse:
+      unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/Envelope"
         - type: object
@@ -210,6 +213,7 @@ components:
         execution_platform:
           type: string
     ProjectListResponse:
+      unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/Envelope"
         - type: object
@@ -238,6 +242,7 @@ components:
           type: integer
           minimum: 1
     TaskListResponse:
+      unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/Envelope"
         - type: object
