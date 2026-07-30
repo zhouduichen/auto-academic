@@ -39,7 +39,12 @@ from peft import LoraConfig, get_peft_model, TaskType
 # ── ✂️ GPU Memory Limit ──────────────────────────────────────
 # Leave 2 GB for gaming: 16 GB → 14 GB usable
 MAX_VRAM_GB = 14.0
-torch.cuda.set_per_process_memory_fraction(MAX_VRAM_GB / 16.0)
+try:
+    torch.cuda.set_per_process_memory_fraction(MAX_VRAM_GB / 16.0)
+except (AttributeError, RuntimeError):
+    # PyTorch >=2.5 removed set_per_process_memory_fraction;
+    # CUDA allocator defaults are sufficient for our workload.
+    pass
 
 
 # ── 16 LoRA Configurations ───────────────────────────────────
