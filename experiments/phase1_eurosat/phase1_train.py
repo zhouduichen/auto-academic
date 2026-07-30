@@ -181,10 +181,16 @@ def build_lora_model(
         ignore_mismatched_sizes=True,
     )
 
-    # Map our target module naming to HF PEFT naming
-    # ViT attention: query, key, value, output.dense
-    target_modules = lora_config_def.target_modules.replace("q_proj", "query").replace(
-        "v_proj", "value").replace("out_proj", "output.dense").split(",")
+    # Map short module names to PEFT target_module regex patterns.
+    # ViT-B/16 encoder layer: vit.encoder.layer.{N}.attention.attention.{query,value}
+    #                         vit.encoder.layer.{N}.attention.output.dense
+    _short_to_regex = {
+        "query": "re:.*attention\\.attention\\.query$",
+        "value": "re:.*attention\\.attention\\.value$",
+        "output.dense": "re:.*attention\\.output\\.dense$",
+    }
+    raw_modules = lora_config_def.target_modules.split(",")
+    target_modules = [_short_to_regex.get(m.strip(), m.strip()) for m in raw_modules]
 
     peft_config = LoraConfig(
         task_type=TaskType.FEATURE_EXTRACTION,
