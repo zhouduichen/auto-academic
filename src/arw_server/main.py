@@ -567,80 +567,18 @@ def create_app(
     return app
 
 
-def _generate_self_signed_cert(cert_path: Path, key_path: Path) -> None:
-    """Generate a self-signed TLS certificate for Tailscale-internal use."""
-    from datetime import datetime, timedelta, timezone
-
-    try:
-        from cryptography import x509
-        from cryptography.x509.oid import NameOID
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import rsa
-    except ImportError:
-        print("[arw-server] cryptography not installed; cannot generate self-signed cert", flush=True)
-        print("[arw-server] Install with: uv sync --group gpu", flush=True)
-        raise
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    key_bytes = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.write_bytes(key_bytes)
-    key_path.chmod(0o600)
-
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "autoresearch-5080"),
-    ])
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(timezone.utc) - timedelta(days=1))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=3650))
-        .add_extension(x509.SubjectAlternativeName([
-            x509.DNSName("autoresearch-5080"),
-            x509.DNSName("autoresearch-5080.tail2530b8.ts.net"),
-        ]), critical=False)
-        .sign(key, hashes.SHA256())
-    )
-    cert_bytes = cert.public_bytes(serialization.Encoding.PEM)
-    cert_path.write_bytes(cert_bytes)
-    cert_path.chmod(0o644)
-
-    print(f"[arw-server] Self-signed cert generated: {cert_path}", flush=True)
-
-
 def main() -> None:
     token = os.environ.get("ARW_API_TOKEN", "")
     if not token:
         raise RuntimeError("ARW_API_TOKEN environment variable is required")
-
-    cert_dir = Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "arw"
-    cert_file = Path(os.environ.get("ARW_SSL_CERTFILE", str(cert_dir / "cert.pem")))
-    key_file = Path(os.environ.get("ARW_SSL_KEYFILE", str(cert_dir / "key.pem")))
-
-    if not cert_file.is_file() or not key_file.is_file():
-        print(f"[arw-server] TLS cert/key not found; generating self-signed pair...", flush=True)
-        _generate_self_signed_cert(cert_file, key_file)
-
     app = create_app(
         db_path=Path(os.environ.get("ARW_DB_PATH", "arw_server.db")),
         api_token=token,
         worktree_root=Path(os.environ.get("ARW_WORKTREE_ROOT", "worktrees")),
     )
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8443,
-        log_level="info",
-        ssl_certfile=str(cert_file),
-        ssl_keyfile=str(key_file),
-    )
+    # Tailscale provides TLS termination for *.tail2530b8.ts.net via Let's Encrypt.
+    # uvicorn runs plain HTTP — do NOT add ssl_certfile/ssl_keyfile here.
+    uvicorn.run(app, host="0.0.0.0", port=8443, log_level="info")
 
 
 if __name__ == "__main__":
