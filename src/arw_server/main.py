@@ -41,7 +41,7 @@ from arw_server.auth import (
 )
 from arw_server.db import connect as db_connect
 from arw_server.db import now
-from arw_server.executor import FakeExecutor
+from arw_server.executor import FakeExecutor, ReliablePEFTExecutor
 from arw_server.state import can_transition, is_terminal
 from arw_server.worker import Worker
 
@@ -64,7 +64,17 @@ KARPATHY_PROJECT = ProjectSummary(
     execution_platform="windows_cuda",
 )
 
-FIXED_PROJECTS = (KARPATHY_PROJECT,)
+RELIABLEPEFT_PROJECT = ProjectSummary(
+    project_id="reliablepeft-phase1",
+    name="ReliablePEFT Phase 1: EuroSAT LoRA",
+    source_url=HttpUrl("https://github.com/zhouduichen/auto-academic"),
+    source_commit="7a8bce4",
+    execution_platform="windows_cuda",
+)
+
+FIXED_PROJECTS = (KARPATHY_PROJECT, RELIABLEPEFT_PROJECT)
+
+RELIABLEPEFT_SCRIPT_DIR = Path("experiments/phase1_eurosat")
 
 
 def _request_id(request: Request) -> str:
@@ -139,7 +149,14 @@ def create_app(
     app.state.token_verifier = lambda supplied, _ctx: supplied.encode() == token_bytes
     app.state.token_scopes = frozenset(FEATURES)
 
-    worker = Worker(db, worktree_root or Path("worktrees"), executor=FakeExecutor())
+    worker = Worker(
+        db,
+        worktree_root or Path("worktrees"),
+        executors={
+            "reliablepeft-phase1": ReliablePEFTExecutor(RELIABLEPEFT_SCRIPT_DIR),
+        },
+        executor=FakeExecutor(),
+    )
     app.state.worker = worker
 
     # ── route helpers (closed over `db`) ──────────────────────────────────
@@ -155,7 +172,8 @@ def create_app(
         )
 
     def _check_project(project_id: str) -> None:
-        if project_id != KARPATHY_PROJECT.project_id:
+        valid = {p.project_id for p in FIXED_PROJECTS}
+        if project_id not in valid:
             raise _error("unknown_project", f"project {project_id} is not supported", 400)
 
     def _auto_validate(experiment_id: str) -> None:

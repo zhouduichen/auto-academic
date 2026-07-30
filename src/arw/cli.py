@@ -93,6 +93,9 @@ def experiments_submit(
     seed: Annotated[list[int], typer.Option("--seed")],
     time_budget: Annotated[int, typer.Option("--time-budget", min=30, max=3600)],
     max_parallel: Annotated[int, typer.Option("--max-parallel", min=1, max=8)],
+    config_id: Annotated[int | None, typer.Option("--config-id", min=0, max=63)] = None,
+    epochs: Annotated[int, typer.Option("--epochs", min=1, max=100)] = 10,
+    batch_size: Annotated[int, typer.Option("--batch-size", min=1, max=256)] = 32,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     try:
@@ -107,6 +110,9 @@ def experiments_submit(
                 seeds=seed,
                 time_budget_seconds=time_budget,
                 max_parallel=max_parallel,
+                config_id=config_id,
+                epochs=epochs,
+                batch_size=batch_size,
             ),
         )
     except (OSError, UnicodeError) as exc:

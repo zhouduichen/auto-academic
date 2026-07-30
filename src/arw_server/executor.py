@@ -1,8 +1,9 @@
-"""Experiment executor — fake and real variants."""
+"""Experiment executor — fake, real karpathy, and reliablepeft variants."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import time
@@ -195,3 +196,183 @@ def _apply_patch(worktree: Path, patch: str) -> None:
         check=True,
         cwd=str(worktree),
     )
+
+
+# ── ReliablePEFT Executor ──────────────────────────────────────────
+
+RELIABLEPEFT_PHASE1_SCRIPT = "phase1_train.py"
+
+
+class ReliablePEFTExecutor:
+    """Real executor that runs phase1_train.py with config_id + seed.
+
+    Requires CUDA-capable GPU. Checks torch.cuda.is_available() before
+    executing and fails fast if no GPU is found.
+    """
+
+    def __init__(self, script_dir: Path) -> None:
+        script_path = script_dir / RELIABLEPEFT_PHASE1_SCRIPT
+        if not script_path.is_file():
+            raise ExecutorError(
+                f"ReliablePEFT script not found: {script_path}"
+            )
+        self._script_dir = script_dir.resolve()
+
+    def _check_cuda(self) -> str | None:
+        """Return error message if CUDA is unavailable, None if OK."""
+        import sys
+        try:
+            import torch
+        except ImportError:
+            return "torch not installed in server venv — cannot check CUDA"
+        if not torch.cuda.is_available():
+            return f"CUDA not available (torch={torch.__version__}, device_count={torch.cuda.device_count()})"
+        device_name = torch.cuda.get_device_name(0) or "unknown"
+        vram_total = torch.cuda.get_device_properties(0).total_mem / 1024**3
+        print(f"[ReliablePEFT] CUDA ready: {device_name} ({vram_total:.1f} GB)", flush=True)
+        return None
+
+    def execute(
+        self,
+        experiment_id: str,
+        worktree: Path,
+        patch: str,
+        patch_sha256: str,
+        time_budget_seconds: int,
+        config_id: int | None = None,
+        seed: int | None = None,
+        epochs: int = 10,
+        batch_size: int = 32,
+    ) -> ExecutionResult:
+        """Run phase1_train.py --config-id X --seed Y."""
+        if config_id is None or seed is None:
+            return ExecutionResult(
+                success=False,
+                summary="config_id and seed are required for ReliablePEFT experiments",
+                artifacts=[],
+            )
+
+        # ── Pre-flight: CUDA check ──
+        cuda_error = self._check_cuda()
+        if cuda_error is not None:
+            return ExecutionResult(
+                success=False,
+                summary=f"GPU pre-flight failed: {cuda_error}",
+                artifacts=[("preflight.log", cuda_error.encode(), "text/plain")],
+            )
+
+        data_dir = str(self._script_dir / "data" / "eurosat")
+        output_dir = str(self._script_dir / "outputs" / "phase1_eurosat")
+
+        import sys
+        python_exe = sys.executable
+        cmd = [
+            python_exe, str(self._script_dir / RELIABLEPEFT_PHASE1_SCRIPT),
+            "--config-id", str(config_id),
+            "--seed", str(seed),
+            "--data-dir", data_dir,
+            "--output-dir", output_dir,
+            "--epochs", str(epochs),
+            "--batch-size", str(batch_size),
+        ]
+
+        env = os.environ.copy()
+        env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(self._script_dir),
+                capture_output=True,
+                timeout=time_budget_seconds + 120,
+                env=env,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            return ExecutionResult(
+                success=False,
+                summary=f"timeout after {time_budget_seconds + 120}s",
+                artifacts=[],
+            )
+
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        combined = (stdout + "\n" + stderr).encode()
+        sha256_val = hashlib.sha256(combined).hexdigest()
+
+        # ── Collect output files from the run directory ──
+        run_dir = (
+            self._script_dir / "outputs" / "phase1_eurosat"
+            / f"config_{config_id:02d}" / f"seed_{seed}"
+        )
+        metrics_bytes = b"{}"
+        metrics_path = run_dir / "metrics.json"
+        if metrics_path.is_file():
+            try:
+                metrics_bytes = metrics_path.read_bytes()
+            except Exception:
+                pass
+
+        # Capture per-sample logits (.npy) as artifacts for Phase 1 analysis
+        npy_files = [
+            "val_logits.npy", "val_labels.npy",
+            "test_logits.npy", "test_labels.npy",
+        ]
+        npy_artifacts: list[tuple[str, bytes, str]] = []
+        for npy_name in npy_files:
+            npy_path = run_dir / npy_name
+            if npy_path.is_file():
+                try:
+                    npy_artifacts.append(
+                        (npy_name, npy_path.read_bytes(), "application/octet-stream")
+                    )
+                except Exception:
+                    pass
+
+        success = proc.returncode == 0
+        if success:
+            try:
+                m = json.loads(metrics_bytes)
+                val_acc = m.get("val_acc")
+                test_acc = m.get("test_acc")
+                train_time = m.get("train_time_seconds")
+                peak_vram = m.get("peak_vram_gb")
+                val_str = f"{val_acc:.4f}" if isinstance(val_acc, (int, float)) else "?"
+                test_str = f"{test_acc:.4f}" if isinstance(test_acc, (int, float)) else "?"
+                time_str = f"{train_time:.0f}s" if isinstance(train_time, (int, float)) else "?"
+                vram_str = f"{peak_vram:.1f}GB" if isinstance(peak_vram, (int, float)) else "?"
+                summary = (
+                    f"config_{config_id:02d}/seed_{seed}: "
+                    f"val_acc={val_str} test_acc={test_str} "
+                    f"time={time_str} vram={vram_str}"
+                )
+            except Exception:
+                summary = f"config_{config_id:02d}/seed_{seed}: ok (exit 0)"
+        else:
+            tail = (stderr or stdout)[-500:]
+            summary = f"config_{config_id:02d}/seed_{seed}: exit {proc.returncode} — {tail}"
+
+        # Build artifact list: run log + metrics + .npy files + run summary JSON
+        artifacts: list[tuple[str, bytes, str]] = [
+            ("run.log", combined, "text/plain"),
+            ("metrics.json", metrics_bytes, "application/json"),
+            (
+                "run.json",
+                json.dumps({
+                    "experiment_id": experiment_id,
+                    "config_id": config_id,
+                    "seed": seed,
+                    "success": success,
+                    "sha256": sha256_val,
+                    "exit_code": proc.returncode,
+                }).encode(),
+                "application/json",
+            ),
+        ]
+        artifacts.extend(npy_artifacts)
+
+        return ExecutionResult(
+            success=success,
+            summary=summary,
+            artifacts=artifacts,
+        )

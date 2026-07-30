@@ -88,6 +88,9 @@ class ExperimentMatrix(StrictModel):
     seeds: list[int] = Field(min_length=1, max_length=32)
     time_budget_seconds: int = Field(ge=30, le=3600)
     max_parallel: int = Field(ge=1, le=8)
+    config_id: int | None = Field(default=None, ge=0, le=63)
+    epochs: int = Field(default=10, ge=1, le=100)
+    batch_size: int = Field(default=32, ge=1, le=256)
 
     @model_validator(mode="after")
     def validate_unique_seeds(self) -> "ExperimentMatrix":

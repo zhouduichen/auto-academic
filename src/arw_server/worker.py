@@ -27,10 +27,12 @@ class Worker:
         worktree_root: Path,
         *,
         executor: Executor | None = None,
+        executors: dict[str, Executor] | None = None,
     ) -> None:
         self._db = db
         self._worktree_root = worktree_root
         self._executor = executor or FakeExecutor()
+        self._executors = executors or {}
         self._running: bool = False
         self._current: str | None = None
         self._thread: threading.Thread | None = None
@@ -79,13 +81,13 @@ class Worker:
 
     def _execute(self, experiment_id: str) -> None:
         row = self._db.execute(
-            "SELECT candidate_patch, candidate_patch_sha256, matrix_json "
+            "SELECT candidate_patch, candidate_patch_sha256, matrix_json, project_id "
             "FROM experiments WHERE experiment_id = ?",
             (experiment_id,),
         ).fetchone()
         if row is None:
             return
-        patch, patch_sha256, matrix_json = row
+        patch, patch_sha256, matrix_json, project_id = row
         import json
 
         matrix = json.loads(matrix_json)
@@ -94,9 +96,23 @@ class Worker:
         worktree = self._worktree_root / experiment_id
         result: ExecutionResult
         try:
-            result = self._executor.execute(
-                experiment_id, worktree, patch, patch_sha256, time_budget
-            )
+            executor = self._executors.get(project_id, self._executor)
+            # ReliablePEFT experiments: pass config_id + seed from matrix
+            if project_id == "reliablepeft-phase1":
+                config_id = matrix.get("config_id")
+                seeds_list = matrix.get("seeds", [0])
+                seed = seeds_list[0] if seeds_list else 0
+                epochs = matrix.get("epochs", 10)
+                batch_size = matrix.get("batch_size", 32)
+                result = executor.execute(
+                    experiment_id, worktree, patch, patch_sha256, time_budget,
+                    config_id=config_id, seed=seed,
+                    epochs=epochs, batch_size=batch_size,
+                )
+            else:
+                result = executor.execute(
+                    experiment_id, worktree, patch, patch_sha256, time_budget
+                )
         except Exception as exc:
             self._fail(experiment_id, "executor_error", str(exc))
             return

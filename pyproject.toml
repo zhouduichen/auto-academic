@@ -25,6 +25,15 @@ dev = [
   "ruff>=0.12,<1",
   "types-pyyaml>=6.0,<7",
 ]
+gpu = [
+  "torch>=2.4",
+  "torchvision>=0.19",
+  "transformers>=4.45",
+  "peft>=0.13",
+  "numpy>=2.0",
+  "huggingface_hub",
+  "pillow",
+]
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
