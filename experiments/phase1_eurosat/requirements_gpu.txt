@@ -1,0 +1,9 @@
+# Phase 1 GPU Node Dependencies
+# Install: pip install -r experiments/phase1_eurosat/requirements_gpu.txt
+torch>=2.4
+torchvision>=0.19
+transformers>=4.45
+peft>=0.13
+numpy>=2.0
+huggingface_hub
+pillow
