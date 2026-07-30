@@ -228,7 +228,10 @@ class ReliablePEFTExecutor:
         if not torch.cuda.is_available():
             return f"CUDA not available (torch={torch.__version__}, device_count={torch.cuda.device_count()})"
         device_name = torch.cuda.get_device_name(0) or "unknown"
-        vram_total = torch.cuda.get_device_properties(0).total_mem / 1024**3
+        try:
+            vram_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        except AttributeError:
+            vram_total = torch.cuda.get_device_properties(0).total_mem / 1024**3
         print(f"[ReliablePEFT] CUDA ready: {device_name} ({vram_total:.1f} GB)", flush=True)
         return None
 
