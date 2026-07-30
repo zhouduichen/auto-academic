@@ -26,6 +26,7 @@ dev = [
   "types-pyyaml>=6.0,<7",
 ]
 gpu = [
+  "cryptography>=42",
   "torch>=2.4",
   "torchvision>=0.19",
   "transformers>=4.45",
