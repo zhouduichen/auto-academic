@@ -37,7 +37,7 @@ SERVER = os.environ.get(
 TOKEN = os.environ.get("ARW_API_TOKEN", "")
 
 # Match Stage C Windows server HEAD
-SOURCE_COMMIT = "7a8bce4000000000000000000000000000000000"  # 40 hex chars
+SOURCE_COMMIT = "847dcced0a55bf9fca29f663b0a9c9a3e9d115a8"  # 40 hex chars
 
 # 16 LoRA configurations (must match phase1_train.py build_16_lora_configs)
 CONFIGS: list[dict[str, Any]] = [

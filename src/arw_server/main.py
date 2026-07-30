@@ -68,7 +68,7 @@ RELIABLEPEFT_PROJECT = ProjectSummary(
     project_id="reliablepeft-phase1",
     name="ReliablePEFT Phase 1: EuroSAT LoRA",
     source_url=HttpUrl("https://github.com/zhouduichen/auto-academic"),
-    source_commit="7a8bce4",
+    source_commit="847dcced0a55bf9fca29f663b0a9c9a3e9d115a8",
     execution_platform="windows_cuda",
 )
 
