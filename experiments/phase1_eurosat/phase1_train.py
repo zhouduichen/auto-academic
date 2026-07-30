@@ -248,7 +248,7 @@ def train_one_config(
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-            outputs = model(images)
+            outputs = model(pixel_values=images)
             loss = criterion(outputs.logits, labels)
             loss.backward()
             optimizer.step()
@@ -269,7 +269,7 @@ def train_one_config(
         with torch.no_grad():
             for images, labels in loader:
                 images = images.to(device)
-                outputs = model(images)
+                outputs = model(pixel_values=images)
                 all_logits.append(outputs.logits.cpu().numpy())
                 all_labels.append(labels.numpy())
         return np.concatenate(all_logits), np.concatenate(all_labels)
