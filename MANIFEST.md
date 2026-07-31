@@ -9,3 +9,5 @@
 | 2026-07-31 13:49 | /experiment-plan | refine-logs/EXPERIMENT_PLAN.md | implementation | latest experiment plan |
 | 2026-07-31 13:49 | /experiment-plan | refine-logs/EXPERIMENT_TRACKER_20260731_134901.md | implementation | M0 run tracker |
 | 2026-07-31 13:49 | /experiment-plan | refine-logs/EXPERIMENT_TRACKER.md | implementation | latest run tracker |
+| 2026-07-31 14:33 | typed-arw-api | refine-logs/EXPERIMENT_TRACKER_20260731_143312.md | implementation | immutable S0 Windows submission evidence |
+| 2026-07-31 14:33 | typed-arw-api | refine-logs/EXPERIMENT_TRACKER.md | implementation | latest tracker with completed S0 smoke |

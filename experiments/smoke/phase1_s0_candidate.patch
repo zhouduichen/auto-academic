@@ -1,0 +1,5 @@
+--- a/train.py
++++ b/train.py
+@@ -1,1 +1,1 @@
+-# AutoResearch placeholder
++# S0-001 typed Windows infrastructure smoke
