@@ -4,7 +4,7 @@
 >
 > Pipeline: `research-lit → idea-creator → novelty-check → research-review → research-refine-pipeline`
 >
-> Current checkpoint: Phase 1 literature landscape in progress
+> Current checkpoint: direct-prior audit complete; long-term direction frozen
 >
 > This is the single composed ARIS report. Per-paper evidence remains in the CSV matrix and verification artifacts; no separate literature-review Markdown file is created.
 
@@ -135,47 +135,50 @@ Consequence: audio can test whether a visual mechanism survives real open-set
 and web-label noise. It should not be added to the mechanism probe before the
 visual mechanism and compute accounting pass.
 
-## Current Gap Statement
+## Direct-Prior Audit Result
 
-The only gap formulation still worth auditing is:
+The 12-paper method-level audit is complete. It rejects the broad candidate
+“estimate sample value and allocate compute”:
 
-> Under a fixed total budget that includes scoring overhead, can one online
-> training intervention distinguish marginally useful hard-clean examples from
-> harmful or redundant examples when defect type and rate are unknown, in a way
-> that existing budget-aware selection and noisy-label dynamics methods cannot
-> express?
+- CADS already allocates data under compute budgets, including grouped sources
+  with 0–90% label noise.
+- RHO-LOSS already prioritizes examples that are learnable, useful, and not yet
+  learned.
+- IDO and DSS already preserve hard-clean examples using cheap dynamics.
+- gradient matching, neighbor consistency, selective backpropagation, and
+  influence methods cover the obvious implementations.
 
-This is a search anchor, not a novelty claim. It will fail if the detailed reading
-shows that CADS/MATES plus IDO/Early Cutting/DSS can express the same
-intervention.
+This framing remains useful background, but is not an algorithmic novelty claim.
 
-## Candidate Status
+## Frozen Research Direction
 
-No candidate has passed `/idea-creator` filtering. Candidate generation is
-intentionally deferred until the following direct-prior cluster is extracted at
-method, cost, assumption, and experiment level:
+> Study the long-horizon contamination of optimizer state caused by defective
+> training batches, and decouple a gradient's bounded immediate effect from its
+> admission into persistent momentum/second-moment state.
 
-1. Compute-Constrained Data Selection;
-2. CADS;
-3. MATES;
-4. IDO;
-5. Early Cutting;
-6. Debiased Sample Selection;
-7. CleaR;
-8. TURN;
-9. Delora;
-10. RACT;
-11. LoGra;
-12. Distributional Training Data Attribution.
+The provisional mechanism must use one model and one stage, require neither a
+clean reference set nor a known noise rate, add no model forward/backward passes,
+and operate mainly on PEFT/head optimizer state.
 
-## Immediate Next Actions
+The irreducible question is not which samples to select, but how long an update
+should remain in the optimizer's memory. PNM/AdaPNM, clipping, robust gradient
+aggregation, and recent optimizer work are mandatory final novelty checks and
+baselines.
 
-1. Finish existence/status verification for the 40 high-priority candidates.
-2. Populate `docs/research-direction/09_adjacent_work_claim_matrix.csv` with the 12 direct killers first, then adjacent baselines.
-3. Read methods, ablations, compute accounting, clean-reference assumptions, and limitations for the 12-paper set.
-4. Only then run `/idea-creator`; reject any proposal equivalent to a known selector, router, loss, dual adapter, rank schedule, influence scorer, or bilevel budget allocator.
-5. Run `/novelty-check` and `/research-review` before authorizing a 12–24-run mechanism probe.
+## Falsification Path
+
+1. Finish a narrowly scoped optimizer-state novelty check.
+2. Run a paired contamination-pulse experiment from the same checkpoint and
+   identical future batches; measure state/parameter divergence and recovery
+   half-life.
+3. Only if the mechanism exists, run a 18–24-run CIFAR-100 + pretrained
+   vision/LoRA probe under clean, instance-dependent noise, and mixed defects.
+4. Only if effect and efficiency gates pass, expand to formal visual evidence,
+   then frozen-hyperparameter validation on FSDnoisy18k.
+
+The complete path and stop rules are in
+`docs/research-direction/10_long_term_experiment_roadmap.md`.
 
 ## Decision
 
-PENDING_LITERATURE_AUDIT
+PROVISIONAL_DIRECTION_LOCKED — NO GPU UNTIL TARGETED NOVELTY CHECK PASSES

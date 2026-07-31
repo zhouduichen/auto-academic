@@ -2,7 +2,7 @@
 
 > 输入对象：ARIS `/idea-discovery`
 >
-> 当前阶段：文献地形、候选机制查新与研究评审；禁止启动新 GPU 实验
+> 当前阶段：主线已冻结，进行 optimizer-state 定向查新；禁止启动新 GPU 实验
 >
 > 成果门槛：CCF-A Full/Regular 或学校正式认定 T1
 
@@ -10,13 +10,13 @@
 
 用户在单张桌面端 RTX 5080 上训练自己的模型时，训练集质量往往低于预期：可能同时存在错标、输入退化、分布外样本、重复低信息样本和类别不平衡。现有方法常把问题简化为已知噪声率下的人工对称错标，或依靠双模型、多阶段清洗、外部大模型和额外干净数据，未必适合固定单卡预算。
 
-当前研究域是：在未知且可能混合的数据缺陷下，如何估计样本对当前训练过程的真实价值，并在固定 GPU 预算内分配有限计算。这里必须区分“样本/标签是否可信”和“继续训练该样本能否带来干净评测收益”。单卡、PEFT、图像或音频都是约束与验证场景，不单独构成贡献。
+冻结的研究主线是：分析低质量批次如何通过 AdamW/动量的一阶、二阶状态产生跨步骤污染，并设计一种低成本机制，将梯度的即时影响与持久状态写入解耦。目标是在未知混合缺陷下，不筛样本、不知道噪声率、不使用干净参考集或额外模型，改善单卡 PEFT 训练。
 
 ## Background
 
 - **Field**：机器学习、数据中心 AI、鲁棒训练、参数高效微调。
-- **Sub-area**：低质量数据训练、noisy-label learning、sample selection、data valuation、curriculum learning、compute-aware training。
-- **Mandatory closest works**：CleaR（ACL 2024）、TURN（IJCAI 2024）、Delora（ACL Findings 2025）、RACT（2026 preprint）、Normalized Losses（ICML 2020）。
+- **Sub-area**：低质量数据训练、noisy-label learning、robust optimization、momentum/Adam dynamics、参数高效微调。
+- **Mandatory closest works**：PNM/AdaPNM、robust momentum/Adam、gradient clipping/aggregation，以及 CleaR、TURN、IDO、DSS、CADS。
 - **What I already tried**：EuroSAT + ViT-B/16 + LoRA，16 个配置 × 3 seeds，共 48 次开发性运行。
 - **What did not establish the new claim**：旧实验训练标签干净，且存在 epoch 不一致、split/train seed 未分离、把 `config × seed` 当作选择单位、重复模拟 RNG 未变化、测试集已参与开发判断等问题。
 
@@ -38,17 +38,17 @@
 ## What I'm Looking For
 
 - [x] 从明确现实问题出发发现可验证的新机制。
-- [x] 对候选机制进行最近工作查新和顶会级批判性评审。
-- [x] 只为通过门禁的候选生成单卡实验计划。
+- [ ] 完成 optimizer-state 候选的最后定向查新和顶会级批判性评审。
+- [x] 冻结带停止条件的单卡长期实验路径。
 - [ ] 现在写论文。
 - [ ] 现在启动大规模训练。
 
 ## Domain Knowledge
 
-- 可靠性高不等于训练价值高：困难但正确的样本可能有高价值；重复的干净样本可能边际价值很低。
-- 现有小损失筛选容易把困难干净样本误判为噪声。
+- 一次有害梯度不仅影响当前更新，还可能通过动量和二阶矩改变后续正常更新。
+- 直接删除异常梯度可能同时删除困难但正确的学习信号；因此主线区分即时影响与持久影响。
 - “更鲁棒”若来自更多训练、额外模型、更强数据增强或额外干净集，在固定计算预算下可能并不成立。
-- 有希望的机制必须产生最近方法没有的可证伪预测，而不只是组合已知信号或更换 LoRA rank。
+- 候选必须产生“污染半衰期缩短”的可证伪预测，并优于 clipping、SGD 和 PNM/AdaPNM。
 
 ## Non-Goals
 
