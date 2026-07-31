@@ -9,6 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location $Repo
+$Python = Join-Path $Repo ".venv\Scripts\python.exe"
 
 $actualCommit = (git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $ExpectedCommit) {
@@ -24,20 +25,23 @@ if (-not (Test-Path -LiteralPath $DataDir -PathType Container)) {
 if (-not (Test-Path -LiteralPath $PilotSeed0 -PathType Container)) {
     throw "pilot seed0 artifacts are unavailable: $PilotSeed0"
 }
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    throw "experiment interpreter is unavailable: $Python"
+}
 
 New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
 $process = [System.Diagnostics.Process]::GetCurrentProcess()
 $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
 $process.ProcessorAffinity = [IntPtr]0x3FF
 
-& uv run python -c "import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))"
+& $Python -c "import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_arch_list())"
 if ($LASTEXITCODE -ne 0) {
     throw "CUDA preflight failed"
 }
 
 function Invoke-Finalizer {
     param([Parameter(Mandatory = $true)][string]$BundleDir)
-    & uv run python -m experiments.m0_optimizer_state.finalize_bundle $BundleDir
+    & $Python -m experiments.m0_optimizer_state.finalize_bundle $BundleDir
     if ($LASTEXITCODE -ne 0) {
         throw "bundle finalization failed: $BundleDir"
     }
@@ -60,7 +64,7 @@ function Invoke-Bundle {
     }
     New-Item -ItemType Directory -Path $BundleDir | Out-Null
     $stdoutPath = Join-Path $BundleDir "stdout.log"
-    & uv run python -m experiments.m0_optimizer_state.m0_run @RunArguments 2>&1 |
+    & $Python -m experiments.m0_optimizer_state.m0_run @RunArguments 2>&1 |
         Tee-Object -FilePath $stdoutPath
     $runnerExit = $LASTEXITCODE
     if ($runnerExit -ne 0) {
