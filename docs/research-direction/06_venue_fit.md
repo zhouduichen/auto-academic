@@ -1,124 +1,101 @@
-# 06 — 投稿适配分析 (Venue Fit)
+# 06 — 投稿门槛与适配规则
 
-> 状态：已完成 | 更新日期：2026-07-29
-> ⚠️ CCF/T 等级需按投稿当日官方目录逐项核验，以下分析基于 2025 年已知目录
-
----
-
-## 各选题的推荐投稿去向
-
-### 选题 1（预算感知 PEFT Agent）→ 方法/系统论文
-
-| 级别 | 会议 | 理由 | 风险 |
-|---|---|---|---|
-| **CCF-B** | **ECAI** | 欧洲 AI 旗舰；接受系统+实证论文；PEFT 方向适配 | 两年一届（偶数年），2026 是窗口 |
-| **CCF-B** | **ICME** (IEEE) | 多媒体处理；PEFT 视觉应用适配 | 需强调视觉/多媒体场景 |
-| **CCF-C** | **IJCNN** (IEEE) | 神经网络旗舰；接受 AutoML 系统论文 | 级别偏低，可作保底 |
-| **CCF-B** | **COLING** | NLP 旗舰（如果扩展到多模态 LLM） | 纯视觉可能不匹配 |
-| **CCF-B 期刊** | **Neural Networks** (Elsevier) | 神经网络；接受系统性方法论文 | 审稿周期长 |
-| **非 CCF** | **AutoML Conference** | 领域最匹配，但不计 CCF | 可作 workshop 或补充投稿 |
-
-### 选题 2（PEFT 稳定性基准）→ 基准/诊断论文
-
-| 级别 | 会议/期刊 | 理由 | 风险 |
-|---|---|---|---|
-| **CCF-A** | **NeurIPS D&B** | 数据集与基准赛道；诊断性研究受鼓励 | 竞争激烈，需极其严谨 |
-| **非 CCF** | **TMLR** | 接受诊断/负面结果；开放获取 | 不计入中国 CCF 目录 |
-| **CCF-C** | **ICPR** (IAPR) | 模式识别；接受基准论文 | 级别偏低 |
-| **CCF-B 期刊** | **Pattern Recognition** (Elsevier) | 接受系统评估论文 | 审稿慢 |
-
-### 选题 3（Agent vs BO 比较）→ 实证/方法学论文
-
-| 级别 | 会议/期刊 | 理由 | 风险 |
-|---|---|---|---|
-| **非 CCF** | **TMLR** | 最适合诊断性公平比较的期刊 | 不计入 CCF |
-| **CCF-B 会议** | **ECAI** | 接受方法论论文 | 需包装为正面贡献 |
-| **ICBINB @ ICLR** | Workshop | 专门接受负面/意外结果 | workshop，非正式发表 |
-
-### 选题 4（SysML v2 数据集）→ 数据集论文
-
-| 级别 | 会议/期刊 | 理由 | 风险 |
-|---|---|---|---|
-| **CCF-A** | **NeurIPS D&B** | 数据集与基准赛道；首个 SysML v2 数据集新颖性强 | 竞争激烈 |
-| **CCF-C 会议** | **LREC-COLING** | 语言资源与评测；接受标注数据集 | SysML 太工程化可能不匹配 |
-| **非 CCF** | **Scientific Data** (Nature) | 数据描述期刊；高影响力 | 需特别严谨的文档 |
+> 状态：研究合同
+>
+> 更新日期：2026-07-31
+>
+> 硬门槛：最终成果至少为 **CCF-A 或学校正式认定 T1**。CCF-B/T2、CCF-C、Findings、Short、Demo 和 Workshop 不作为本项目成果目标。
 
 ---
 
-## CCF 推荐目录参考
+## 1. 目录依据
 
-以下为当前已知的部分 CCF 推荐目录会议/期刊等级（仅供参考，必须逐项核验）：
+CCF 已于 2026 年 3 月 31 日发布第七版《中国计算机学会推荐国际学术会议和期刊目录》，并在 4 月 9 日勘误。官方说明明确：
 
-### 会议
+- 目录分 A、B、C 三类；
+- 会议仅计 Full paper 或 Regular paper；
+- Short、Demo、Technical Brief、Summary、Findings 和伴随 Workshop 不计入目录。
 
-| 简称 | 全称 | CCF 等级 | 领域适配 |
-|---|---|---|---|
-| AAAI | AAAI Conference on AI | A | 通用 AI |
-| IJCAI | Int'l Joint Conf. on AI | A | 通用 AI |
-| NeurIPS | Neural Information Processing Systems | A | ML |
-| ICML | Int'l Conf. on Machine Learning | A | ML |
-| CVPR | Computer Vision and Pattern Recognition | A | CV |
-| ICCV | Int'l Conf. on Computer Vision | A | CV |
-| ECCV | European Conf. on Computer Vision | B | CV |
-| ECAI | European Conf. on AI | B | 通用 AI |
-| EMNLP | Empirical Methods in NLP | B | NLP |
-| COLING | Int'l Conf. on Computational Linguistics | B | NLP |
-| ICME | Int'l Conf. on Multimedia and Expo | B | 多媒体 |
-| ICASSP | Int'l Conf. on Acoustics, Speech, and SP | B | 信号处理 |
-| IJCNN | Int'l Joint Conf. on Neural Networks | C | 神经网络 |
-| ICPR | Int'l Conf. on Pattern Recognition | C | 模式识别 |
-| ICONIP | Int'l Conf. on Neural Information Processing | C | 神经网络 |
-| PRICAI | Pacific Rim Int'l Conf. on AI | C | 通用 AI |
+官方来源：
 
-### 期刊
+- [CCF 第七版目录发布说明](https://www.ccf.org.cn/Academic_Evaluation/By_category/)
+- [CCF 人工智能目录](https://www.ccf.org.cn/Academic_Evaluation/AI/)
+- [CCF 计算机图形学与多媒体目录](https://www.ccf.org.cn/Academic_Evaluation/CGAndMT/)
 
-| 简称 | 全称 | CCF 等级 | 注 |
-|---|---|---|---|
-| TPAMI | IEEE Trans. PAMI | A |  |
-| IJCV | Int'l Journal of Computer Vision | A |  |
-| TIP | IEEE Trans. Image Processing | A |  |
-| JMLR | Journal of Machine Learning Research | A |  |
-| AIJ | Artificial Intelligence | A |  |
-| PR | Pattern Recognition | B |  |
-| Neural Networks | Neural Networks | B |  |
-| Neurocomputing | Neurocomputing | C |  |
-| PRL | Pattern Recognition Letters | C |  |
-| TMLR | Trans. on Machine Learning Research | 非 CCF | 开放获取 |
-| Machine Learning | Machine Learning (Springer) | B |  |
+学校 T1 的认定必须以后续提供的学校/学院正式文件为准，不用中科院分区、影响因子或网络榜单自行替代。
 
 ---
 
-## 投稿策略建议
+## 2. 目标层级
 
-### 主攻路线（选题 1）
+### 最低可接受成果
 
-1. **第一目标**：ECAI 2026（CCF-B，偶数年窗口）或 ICME 2027
-2. **同时准备**：AutoML Conference 2026/2027（不计 CCF 但领域匹配，可作论文基础）
-3. **保底**：IJCNN 2027（CCF-C）
+- CCF-A 会议 Full/Regular paper；或
+- CCF-A 期刊论文；或
+- 学校正式目录中的 T1 会议/期刊论文。
 
-### 备选路线（选题 2）
+### 不作为目标
 
-1. **第一目标**：NeurIPS 2026 D&B Track（CCF-A，冲高）
-2. **保底**：TMLR（滚动投稿）或 Pattern Recognition（CCF-B 期刊）
-
-### 副线（选题 4）
-
-1. **第一目标**：NeurIPS 2026 D&B Track
-2. **保底**：Scientific Data 或 CCF-C 期刊
-
-### 组合策略（如果资源允许）
-
-**同一核心贡献可以产出两篇定位不同的论文**：
-- **论文 A（方法）**：预算感知 PEFT Agent 的系统设计与验证 → ECAI/ICME（CCF-B）
-- **论文 B（基准）**：PEFT 稳定性与方差基准 → NeurIPS D&B（CCF-A）或 TMLR
-
-两篇共享实验基础设施（VTAB-1K 测试平台、PEFT 方法库）但贡献不同。
+- CCF-B/T2 及以下；
+- 非目录 Workshop；
+- Findings、Short、Demo、Poster-only；
+- 仅有 arXiv 预印本；
+- 以“未来扩展后可能达到 A/T1”为理由先完成一个低门槛版本。
 
 ---
 
-## 风险提示
+## 3. 可能的投稿类型
 
-1. **CCF 等级变动**：目录每年更新，投稿前必须逐项核验最新官方目录
-2. **学院认定差异**：部分学院的"认可目录"与 CCF 目录不完全一致，需对表查证
-3. **导师合著要求**：如果学院对作者顺序/第一署名单位有特殊计分规则，记录但不自行解读
-4. **学位点要求**：部分学校对学位论文发表成果有期刊/会议的特殊规定（如要求期刊论文）
+具体 venue 只能在研究问题和贡献冻结后选择，不能先选会再拼题目。
+
+| 贡献形态 | 可能匹配的 CCF-A 类型 | 必须具备的证据 |
+|---|---|---|
+| 通用机器学习方法 | ICML、NeurIPS、AAAI、IJCAI 等人工智能 A 类会议 | 新机制/算法、理论或强实证、多任务强基线 |
+| 视觉方法 | CVPR、ICCV 等视觉 A 类会议；TPAMI、IJCV 等 A 类期刊 | 多个标准视觉基准、真实噪声、充分消融 |
+| 跨模态/多媒体方法 | ACM MM 等多媒体 A 类会议；TIP 等 A 类期刊 | 多模态问题本身不可约，不能只是分别跑三个分类器 |
+| 方法学或长期完整研究 | JMLR、Artificial Intelligence 等 A 类期刊 | 完整理论、广泛实验、清晰的一般性结论 |
+
+上表只表示领域适配，不表示录用概率或预先承诺投稿。
+
+---
+
+## 4. A/T1 稿件所需最低证据包
+
+### 问题与新颖性
+
+- 与 2024—2026 年最近工作的逐项差异表；
+- 至少一个可证伪的机制假设；
+- 一个不是换模态、换骨干或模块拼装的新贡献；
+- 明确的 kill argument 和撤退条件。
+
+### 实验
+
+- 合成可控缺陷和真实低质量数据；
+- 至少两个实质不同的数据集/任务，是否需要第三模态由主张决定；
+- 强基线、相同调参预算和相同数据访问预算；
+- 效果、GPU 时间、峰值显存、额外存储和失败率；
+- 独立的 split/train/noise seeds；
+- 主要比较至少三个种子，关键结论按先验功效或方差决定是否增加重复。
+
+### 研究诚信
+
+- 预注册主指标、主要比较和停止条件；
+- 测试集只用于冻结方案后的最终评估；
+- 保存逐样本 ID、噪声掩码、训练轨迹、代码 commit 和运行环境；
+- 报告失败实验、负面结果和超参数搜索成本。
+
+---
+
+## 5. 投稿决策门禁
+
+只有满足以下条件才讨论具体 A/T1 投稿：
+
+1. novelty audit 通过；
+2. 机制最小实验通过；
+3. 方法优于最强简单基线，而非只优于 CE；
+4. 固定 GPU 时间下收益仍成立；
+5. 真实低质量数据上方向一致；
+6. 外部审计无法用已有方法直接解释全部结果；
+7. 已取得学校 T1 正式目录并完成逐项核验。
+
+如果证据不足，回到研究问题，不降低目标级别。

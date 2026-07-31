@@ -1,6 +1,9 @@
 # 03 — 精读笔记 (Deep Reading Notes)
 
 > 状态：已完成 | 更新日期：2026-07-29
+>
+> ⚠️ 本文件是原始调研证据库，其中“与本项目关系”等判断保留当时语境，不代表 2026-07-31 后的当前推荐。现行研究目标与门禁以 [`04_gap_analysis.md`](04_gap_analysis.md) 至 [`07_recommendation.md`](07_recommendation.md) 为准。
+>
 > 总计：30 篇精读（⭐ 核心 15 篇）
 
 ---
