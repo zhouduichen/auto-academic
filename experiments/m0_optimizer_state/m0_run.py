@@ -1,4 +1,4 @@
-"""M0: causal audit of persistent optimizer-state contamination.
+"""M0/M0.5: causal audit of persistent optimizer-state contamination.
 
 One invocation runs one optimizer x pulse x seed bundle and produces four
 paired trajectories from a shared checkpoint. CIFAR-100 test data is never
@@ -31,6 +31,7 @@ from transformers import ViTForImageClassification, ViTModel
 from arw.m0_core import (
     BranchState,
     build_causal_branches,
+    build_state_carrier_branches,
     capture_optimizer_state,
     capture_trainable_state,
     optimizer_moment_distance,
@@ -63,6 +64,7 @@ class RunConfig:
     model_id: str
     lora_rank: int
     device: str
+    state_attribution: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,6 +189,10 @@ def materialize_batch(
     )
 
 
+def materialize_batch_cpu(dataset: CIFAR100, plan: BatchPlan) -> tuple[Tensor, Tensor]:
+    return materialize_batch(dataset, plan, torch.device("cpu"))
+
+
 def materialize_probe(
     dataset: CIFAR100, indices: list[int], batch_size: int, device: torch.device
 ) -> list[tuple[Tensor, Tensor]]:
@@ -215,9 +221,7 @@ def build_model(config: RunConfig) -> nn.Module:
         "error_msgs",
     )
     anomalies = {
-        field: loading_info.get(field, [])
-        for field in anomaly_fields
-        if loading_info.get(field)
+        field: loading_info.get(field, []) for field in anomaly_fields if loading_info.get(field)
     }
     if anomalies:
         raise RuntimeError(f"ViT backbone load audit failed: {anomalies}")
@@ -354,6 +358,7 @@ def run_trajectory(
     control_references: dict[int, tuple[BranchState, Tensor]] | None,
     control_losses: dict[int, float] | None,
     branch_rng: RngState,
+    replay_batches_cpu: list[tuple[Tensor, Tensor]] | None = None,
 ) -> tuple[list[dict[str, object]], dict[int, tuple[BranchState, Tensor]]]:
     restore_branch(model, optimizer, initial)
     restore_rng_state(branch_rng)
@@ -396,7 +401,12 @@ def run_trajectory(
                 }
             )
         if horizon < len(replay_plans):
-            images, labels = materialize_batch(dataset, replay_plans[horizon], device)
+            if replay_batches_cpu is None:
+                images, labels = materialize_batch(dataset, replay_plans[horizon], device)
+            else:
+                cpu_images, cpu_labels = replay_batches_cpu[horizon]
+                images = cpu_images.to(device, non_blocking=True)
+                labels = cpu_labels.to(device, non_blocking=True)
             training_step(model, optimizer, criterion, images, labels)
     return rows, references
 
@@ -460,7 +470,10 @@ def write_artifacts(
 
 def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object]:
     started = time.time()
+    torch.set_num_threads(min(4, os.cpu_count() or 1))
     seed_everything(config.seed)
+    if config.state_attribution and (config.optimizer != "adamw" or config.pulse != "label_flip"):
+        raise ValueError("state attribution requires AdamW with label_flip")
     device = torch.device(config.device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -523,7 +536,21 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
     corrupt_post_rng = capture_rng_state()
     if _state_sha(clean_post_rng) != _state_sha(corrupt_post_rng):
         raise RuntimeError("clean/corrupt candidate steps consumed different RNG state")
-    branches = build_causal_branches(clean, corrupt)
+    branches = (
+        build_state_carrier_branches(clean, corrupt)
+        if config.state_attribution
+        else build_causal_branches(clean, corrupt)
+    )
+    branch_names = tuple(branches)
+    replay_batches_cpu = None
+    if config.state_attribution:
+        cache_started = time.time()
+        replay_batches_cpu = [materialize_batch_cpu(dataset, plan) for plan in replay_plans]
+        print(
+            f"replay cache complete batches={len(replay_batches_cpu)} "
+            f"seconds={time.time() - cache_started:.2f}",
+            flush=True,
+        )
     checkpoint_manifest = {
         "pre_parameters_sha256": _state_sha(pre_parameters),
         "pre_optimizer_sha256": _state_sha(pre_optimizer),
@@ -540,7 +567,7 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
     all_rows: list[dict[str, object]] = []
     control_references: dict[int, tuple[BranchState, Tensor]] | None = None
     control_losses: dict[int, float] | None = None
-    for branch_name in BRANCHES:
+    for branch_name in branch_names:
         branch_rows, references = run_trajectory(
             branch_name,
             branches[branch_name],
@@ -554,6 +581,7 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
             control_references,
             control_losses,
             clean_post_rng,
+            replay_batches_cpu,
         )
         rows_by_branch[branch_name] = branch_rows
         all_rows.extend(branch_rows)
@@ -563,7 +591,7 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
         print(f"trajectory={branch_name} complete", flush=True)
 
     branch_summary: dict[str, object] = {}
-    for branch_name in BRANCHES:
+    for branch_name in branch_names:
         branch_rows = rows_by_branch[branch_name]
         horizons = [int(row["horizon"]) for row in branch_rows]
         excess = [float(row["clean_loss_excess"]) for row in branch_rows]
@@ -584,14 +612,19 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
 
     elapsed = time.time() - started
     peak_vram = torch.cuda.max_memory_allocated(device) / 1024**3 if device.type == "cuda" else 0.0
+    primary_branch = "state_both" if config.state_attribution else "state_only"
     summary = {
         "status": "succeeded",
-        "bundle_id": f"{config.optimizer}-{config.pulse}-seed{config.seed}",
-        "primary_endpoint": branch_summary["state_only"],
+        "bundle_id": (
+            f"m05-{config.optimizer}-{config.pulse}-seed{config.seed}"
+            if config.state_attribution
+            else f"{config.optimizer}-{config.pulse}-seed{config.seed}"
+        ),
+        "primary_endpoint": branch_summary[primary_branch],
         "branches": branch_summary,
         "wall_clock_seconds": elapsed,
         "peak_vram_gb": peak_vram,
-        "train_steps": config.warmup_steps + 2 + 4 * config.replay_steps,
+        "train_steps": config.warmup_steps + 2 + len(branch_names) * config.replay_steps,
         "test_loaded": False,
     }
     write_artifacts(
@@ -622,6 +655,7 @@ def parse_args() -> tuple[RunConfig, Path, Path]:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--probe-size", type=int, default=256)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--state-attribution", action="store_true")
     args = parser.parse_args()
     learning_rate = 3e-4 if args.optimizer == "adamw" else 1e-2
     config = RunConfig(
@@ -639,6 +673,7 @@ def parse_args() -> tuple[RunConfig, Path, Path]:
         model_id="google/vit-base-patch16-224-in21k",
         lora_rank=8,
         device=args.device,
+        state_attribution=args.state_attribution,
     )
     return config, args.data_dir, args.output_dir
 

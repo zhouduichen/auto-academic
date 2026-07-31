@@ -67,6 +67,43 @@ def test_small_sgd_bundle_is_reproducible_and_writes_audit_artifacts(
     assert expected == {path.name for path in output_dir.iterdir()}
 
 
+def test_small_m05_bundle_writes_five_state_carrier_trajectories(
+    tmp_path: object, monkeypatch: object
+) -> None:
+    monkeypatch.setattr(m0, "CIFAR100", lambda **_: FakeCIFAR100())
+    monkeypatch.setattr(m0, "build_model", lambda _: TinyVisionModel())
+    config = m0.RunConfig(
+        optimizer="adamw",
+        pulse="label_flip",
+        seed=0,
+        split_seed=123,
+        pulse_seed=456,
+        warmup_steps=1,
+        replay_steps=2,
+        batch_size=2,
+        probe_size=2,
+        learning_rate=0.01,
+        weight_decay=0.0,
+        model_id="unused",
+        lora_rank=1,
+        device="cpu",
+        state_attribution=True,
+    )
+
+    summary = m0.run(config, tmp_path / "data", tmp_path / "m05")
+
+    assert summary["bundle_id"] == "m05-adamw-label_flip-seed0"
+    assert tuple(summary["branches"]) == (
+        "control",
+        "m_only",
+        "v_only",
+        "state_both",
+        "parameter_only",
+    )
+    assert summary["train_steps"] == 13
+    assert summary["test_loaded"] is False
+
+
 def test_label_flip_changes_every_label() -> None:
     images = torch.zeros(4, 3, 8, 8)
     labels = torch.tensor([0, 1, 98, 99])
@@ -141,9 +178,7 @@ def test_build_model_loads_audited_backbone_then_adds_classifier(
 
 
 @pytest.mark.parametrize("field", ["missing_keys", "unexpected_keys"])
-def test_build_model_fails_closed_on_backbone_load_anomaly(
-    field: str, monkeypatch: object
-) -> None:
+def test_build_model_fails_closed_on_backbone_load_anomaly(field: str, monkeypatch: object) -> None:
     loading_info = {
         "missing_keys": set(),
         "unexpected_keys": set(),

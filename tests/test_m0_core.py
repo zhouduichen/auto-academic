@@ -5,7 +5,9 @@ import torch
 
 from arw.m0_core import (
     BranchState,
+    CandidateState,
     build_causal_branches,
+    build_state_carrier_branches,
     capture_optimizer_state,
     capture_trainable_state,
     optimizer_moment_distance,
@@ -99,6 +101,50 @@ def test_adamw_cross_combines_parameter_and_optimizer_state() -> None:
     restored_parameters = capture_trainable_state(model)
     for name, value in branches["control"].parameters.items():
         torch.testing.assert_close(restored_parameters[name], value, rtol=0, atol=0)
+
+
+def test_adamw_state_carrier_branches_isolate_first_and_second_moments() -> None:
+    _, _, causal = _candidate_pair(
+        lambda params: torch.optim.AdamW(params, lr=0.05, weight_decay=0.0)
+    )
+    clean_branch = causal["control"]
+    corrupt_branch = causal["full"]
+    clean = CandidateState(
+        clean_branch.parameters,
+        clean_branch.optimizer,
+        clean_branch.pulse_loss,
+        clean_branch.gradient_norm,
+    )
+    corrupt = CandidateState(
+        corrupt_branch.parameters,
+        corrupt_branch.optimizer,
+        corrupt_branch.pulse_loss,
+        corrupt_branch.gradient_norm,
+    )
+
+    branches = build_state_carrier_branches(clean, corrupt)
+
+    assert tuple(branches) == (
+        "control",
+        "m_only",
+        "v_only",
+        "state_both",
+        "parameter_only",
+    )
+    assert (
+        optimizer_moment_distance(branches["m_only"].optimizer, corrupt.optimizer, "exp_avg") == 0.0
+    )
+    assert (
+        optimizer_moment_distance(branches["m_only"].optimizer, clean.optimizer, "exp_avg_sq")
+        == 0.0
+    )
+    assert (
+        optimizer_moment_distance(branches["v_only"].optimizer, clean.optimizer, "exp_avg") == 0.0
+    )
+    assert (
+        optimizer_moment_distance(branches["v_only"].optimizer, corrupt.optimizer, "exp_avg_sq")
+        == 0.0
+    )
 
 
 def test_sgd_without_momentum_state_only_is_exact_control() -> None:

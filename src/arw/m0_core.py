@@ -130,6 +130,85 @@ def build_causal_branches(clean: CandidateState, corrupt: CandidateState) -> dic
     }
 
 
+def compose_adamw_state(
+    clean: OptimizerState,
+    corrupt: OptimizerState,
+    corrupt_moments: frozenset[str],
+) -> OptimizerState:
+    allowed = frozenset({"exp_avg", "exp_avg_sq"})
+    if not corrupt_moments or not corrupt_moments <= allowed:
+        raise ValueError("corrupt_moments must be a non-empty subset of AdamW moments")
+    if clean.get("param_groups") != corrupt.get("param_groups"):
+        raise ValueError("optimizer parameter groups do not match")
+    clean_state = clean.get("state")
+    corrupt_state = corrupt.get("state")
+    if not isinstance(clean_state, dict) or not isinstance(corrupt_state, dict):
+        raise ValueError("optimizer state is malformed")
+    if set(clean_state) != set(corrupt_state):
+        raise ValueError("optimizer state parameter IDs do not match")
+
+    combined = deepcopy(clean)
+    combined_state = combined["state"]
+    for parameter_id in clean_state:
+        clean_parameter = clean_state[parameter_id]
+        corrupt_parameter = corrupt_state[parameter_id]
+        combined_parameter = combined_state[parameter_id]
+        if not all(
+            isinstance(item, dict)
+            for item in (
+                clean_parameter,
+                corrupt_parameter,
+                combined_parameter,
+            )
+        ):
+            raise ValueError("optimizer parameter state is malformed")
+        if set(clean_parameter) != set(corrupt_parameter):
+            raise ValueError("optimizer parameter-state keys do not match")
+        for moment in allowed:
+            left = clean_parameter.get(moment)
+            right = corrupt_parameter.get(moment)
+            if not isinstance(left, Tensor) or not isinstance(right, Tensor):
+                raise ValueError(f"AdamW state is missing {moment}")
+            if left.shape != right.shape or left.dtype != right.dtype:
+                raise ValueError(f"AdamW {moment} tensors do not match")
+        clean_step = clean_parameter.get("step")
+        corrupt_step = corrupt_parameter.get("step")
+        if isinstance(clean_step, Tensor) and isinstance(corrupt_step, Tensor):
+            if not torch.equal(clean_step, corrupt_step):
+                raise ValueError("AdamW step counters do not match")
+        elif clean_step != corrupt_step:
+            raise ValueError("AdamW step counters do not match")
+        for moment in corrupt_moments:
+            combined_parameter[moment] = corrupt_parameter[moment].detach().clone()
+    return combined
+
+
+def build_state_carrier_branches(
+    clean: CandidateState, corrupt: CandidateState
+) -> dict[str, BranchState]:
+    return {
+        "control": BranchState(clean.parameters, clean.optimizer, clean.loss, clean.gradient_norm),
+        "m_only": BranchState(
+            clean.parameters,
+            compose_adamw_state(clean.optimizer, corrupt.optimizer, frozenset({"exp_avg"})),
+            clean.loss,
+            corrupt.gradient_norm,
+        ),
+        "v_only": BranchState(
+            clean.parameters,
+            compose_adamw_state(clean.optimizer, corrupt.optimizer, frozenset({"exp_avg_sq"})),
+            clean.loss,
+            corrupt.gradient_norm,
+        ),
+        "state_both": BranchState(
+            clean.parameters, corrupt.optimizer, clean.loss, corrupt.gradient_norm
+        ),
+        "parameter_only": BranchState(
+            corrupt.parameters, clean.optimizer, corrupt.loss, corrupt.gradient_norm
+        ),
+    }
+
+
 def _tensor_leaves(value: object) -> list[Tensor]:
     if isinstance(value, Tensor):
         return [value.detach().float()]
