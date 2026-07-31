@@ -140,6 +140,12 @@ def test_submit_builds_hash_and_matrix(tmp_path: Path, monkeypatch: object) -> N
             "30",
             "--max-parallel",
             "1",
+            "--config-id",
+            "0",
+            "--epochs",
+            "1",
+            "--batch-size",
+            "32",
             "--json",
         ],
     )
@@ -149,6 +155,9 @@ def test_submit_builds_hash_and_matrix(tmp_path: Path, monkeypatch: object) -> N
     request = FakeClient.calls[0][1]
     assert request.candidate.patch_sha256 == sha256(b"patch").hexdigest()
     assert request.matrix.seeds == [1]
+    assert request.matrix.config_id == 0
+    assert request.matrix.epochs == 1
+    assert request.matrix.batch_size == 32
 
 
 def test_read_and_cancel_commands(monkeypatch: object) -> None:
