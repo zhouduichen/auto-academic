@@ -20,7 +20,7 @@
 
 数据缺陷包括但不限于错标、输入退化、OOD、重复低信息样本和不平衡。首轮机制实验必须收窄变量，不能一次覆盖全部缺陷。
 
-AutoResearch 只提供固定预算、基线先行、逐轮验证和结果留痕的实验规划范式。ARIS 只提供计划、完整性、结果—结论和最强拒稿理由审计。二者都不是论文研究对象或贡献。
+AutoResearch 只提供固定预算、基线先行、逐轮验证和结果留痕的实验规划范式。当前研究发现阶段直接使用 ARIS 的 `idea-discovery` 链路：`research-lit → idea-creator → novelty-check → research-review → research-refine-pipeline`；实验完成后再使用完整性、结果—结论、引用和最强拒稿理由审计。二者都不是论文研究对象或贡献。
 
 ## 3. 已否决的定位
 
@@ -44,11 +44,11 @@ AutoResearch 只提供固定预算、基线先行、逐轮验证和结果留痕�
 
 ## 5. 证据流程
 
-1. **Novelty audit**：形成相邻工作 overlap matrix 和最强拒稿理由。
+1. **ARIS idea discovery**：由 `research-lit` 形成相邻工作矩阵，`novelty-check` 核验候选核心主张，`research-review` 给出顶会级拒稿风险；综合结论折叠到唯一的 `idea-stage/IDEA_REPORT.md`。
 2. **Pilot repair**：修复现有 EuroSAT 实验的协议与分析，不扩大旧选题。
 3. **Mechanism probe**：12—24 次运行内推翻或支持核心机制。
 4. **Formal study**：仅在前三步通过后设计多数据集、真实噪声、强基线与效率实验。
-5. **Claim audit**：测试集只在方案冻结后使用，结论必须由预注册比较直接支持。
+5. **Claim audit**：测试集只在方案冻结后使用，结论必须由预注册比较直接支持；论文稳定后再运行 `citation-audit` 与 `kill-argument`。
 
 机制探针的 12—24 次运行是探索预算上限，不是已经确定的实验矩阵。正式实验必须在研究问题通过 novelty gate 后另行设计和审阅，不能从现有 48 次运行直接外推。
 

@@ -4,9 +4,9 @@
 
 **Goal:** Produce an evidence-backed go/no-go decision on one A/T1-caliber research mechanism for single-GPU training with low-quality data, before designing or running new experiments.
 
-**Architecture:** The work is an evidence-first funnel. It freezes an audit protocol, extracts claim-level evidence from the closest papers, expands the search to adjacent fields, audits the existing EuroSAT pilot, subjects candidate mechanisms to kill arguments, and permits at most one candidate to enter a separate experiment-design cycle. Every conclusion is stored as a reviewable artifact; no training code or GPU job is authorized by this plan.
+**Architecture:** This plan instantiates ARIS `/idea-discovery` rather than creating a parallel literature workflow: `/research-lit → /idea-creator → /novelty-check → /research-review → /research-refine-pipeline`. A verified CSV is the persistent per-paper evidence store, while `idea-stage/IDEA_REPORT.md` is the sole human-facing synthesis. The existing EuroSAT pilot is audited as context, and at most one reviewed candidate may enter a separate experiment-design cycle. No training code or GPU job is authorized by this plan.
 
-**Tech Stack:** Markdown, CSV, primary-source web research, existing Phase 1 JSON/NumPy artifacts, Git, ARIS-style claim and kill-argument review.
+**Tech Stack:** ARIS research-lit/arXiv/Semantic Scholar/OpenAlex/verify-papers adapters, novelty-check, research-review, Markdown, CSV, primary sources, existing Phase 1 JSON/NumPy artifacts, and Git.
 
 ## Global Constraints
 
@@ -14,6 +14,8 @@
 - CCF-B/T2, CCF-C, Findings, Short, Demo, Workshop, and preprint-only outcomes are not project goals.
 - The research object is low-quality-data training under a fixed single-desktop-RTX-5080 budget.
 - AutoResearch is an experiment-planning reference; ARIS is a research-assurance reference. Neither is a paper contribution.
+- `/prior-art-search` is patent/FTO-specific and is not part of this academic novelty audit.
+- `/kill-argument` is deferred until a stable paper claim set and draft exist; idea-level rejection pressure comes from `/novelty-check` and `/research-review`.
 - ReliablePEFT, selection reliability, `/selection-audit`, LCB/Bootstrap packaging, and Agent orchestration are rejected main topics.
 - Existing Phase 1 outputs are development pilot evidence only and remain untracked.
 - Do not edit training code, install training dependencies, launch GPU work, name a proposed method, or draft a paper under this plan.
@@ -25,12 +27,13 @@
 
 ## File Map
 
+- Create `RESEARCH_BRIEF.md`: concise input contract loaded by ARIS `/idea-discovery`.
 - Create `docs/research-direction/08_novelty_audit_protocol.md`: frozen search, extraction, inclusion, exclusion, and decision rules.
 - Create `docs/research-direction/09_adjacent_work_claim_matrix.csv`: one row per work with claim-level overlap fields.
 - Create `docs/research-direction/10_phase1_pilot_audit.md`: salvageable evidence, invalid comparisons, and prohibited reuse of the 48-run pilot.
-- Create `docs/research-direction/11_candidate_mechanism_dossiers.md`: at most three candidate mechanisms, each with falsifiable predictions and irreducible differences.
-- Create `docs/research-direction/12_kill_argument_review.md`: strongest rejection case and independent verdict for each candidate.
-- Create `docs/research-direction/13_novelty_gate_decision.md`: exactly one `GO`, or `NO_GO`.
+- Create `idea-stage/IDEA_REPORT.md`: the single composed ARIS report containing literature synthesis, at most three candidates, novelty verdicts, external review, and exactly one `GO` or `NO_GO`.
+- Create `.aris/traces/novelty-check/` and `.aris/traces/research-review/`: forensic reviewer traces, referenced but not duplicated in the report.
+- Create `refine-logs/FINAL_PROPOSAL.md` and `refine-logs/EXPERIMENT_PLAN.md` only when one candidate receives `GO`.
 - Modify `docs/research-direction/04_gap_analysis.md`: replace provisional gaps only after the gate decision.
 - Modify `docs/research-direction/05_candidate_topics.md`: promote the selected candidate or record `NO_GO`.
 - Modify `docs/research-direction/07_recommendation.md`: point to the gate decision and next approved action.
@@ -47,6 +50,11 @@
 - Produces: Frozen definitions and decision rules used by Tasks 2, 3, 5, and 6.
 
 - [ ] **Step 1: Write the protocol header and scope**
+
+Before the protocol, create `RESEARCH_BRIEF.md` from ARIS
+`templates/RESEARCH_BRIEF_TEMPLATE.md`. It must state the user problem, fixed
+single-RTX-5080 constraint, A/T1 floor, old-pilot limitations, mandatory anchor
+papers, modality policy, and non-goals. Long details are referenced, not copied.
 
 Create the document with these exact top-level sections:
 
@@ -162,7 +170,7 @@ git commit -m "docs: freeze noisy-data novelty audit protocol"
 Use this exact CSV header:
 
 ```csv
-work_id,title,year,status,venue,primary_url,code_url,task_modalities,backbone_family,peft_method,data_defects,noise_assumed_known,clean_reference_required,extra_models,extra_training_stages,core_mechanism,main_claim,mechanism_evidence,efficiency_reported,strongest_result,reported_limitations,overlap_with_candidate_A,overlap_with_candidate_B,direct_prior_risk,audit_notes
+work_id,title,year,status,venue,primary_url,verification_status,code_url,task_modalities,backbone_family,peft_method,data_defects,noise_assumed_known,clean_reference_required,extra_models,extra_training_stages,core_mechanism,main_claim,mechanism_evidence,efficiency_reported,strongest_result,reported_limitations,overlap_with_candidate_A,overlap_with_candidate_B,direct_prior_risk,audit_notes
 ```
 
 Use RFC 4180-compatible quoting. Unknown values must be the literal `not_reported`, not an empty cell.
@@ -232,7 +240,7 @@ git commit -m "docs: map anchor noisy-data training claims"
 
 **Interfaces:**
 - Consumes: Task 1 query families and Task 2 schema.
-- Produces: A minimum 25-work primary-source corpus spanning all mechanisms that could kill the candidates.
+- Produces: A minimum 50-work primary-source corpus spanning all mechanisms that could kill the candidates.
 
 - [ ] **Step 1: Search all ten query families**
 
@@ -246,15 +254,16 @@ For each query family:
 
 The final corpus must include at least:
 
-- 5 robust PEFT works;
-- 5 training-dynamics/sample-selection works;
-- 4 data-valuation or influence works;
-- 4 compute-aware/curriculum works;
-- 3 mixed-defect or OOD-contamination works;
-- 2 real-noise audio works;
+- 8 robust PEFT works;
+- 10 training-dynamics/sample-selection works;
+- 8 data-valuation or influence works;
+- 8 compute-aware/curriculum works;
+- 8 mixed-defect or OOD-contamination works;
+- 5 real-noise audio works;
+- 3 cross-modal noisy-supervision works;
 - the five anchors from Task 2.
 
-A work may satisfy multiple categories, but the CSV must contain at least 25 distinct works.
+A work may satisfy multiple categories, but the CSV must contain at least 50 distinct works. Do not satisfy the count with surveys, duplicate preprint/publication records, weak keyword matches, or papers that cannot threaten a candidate claim.
 
 - [ ] **Step 2: Mark direct-prior risk**
 
@@ -282,7 +291,7 @@ path = Path("docs/research-direction/09_adjacent_work_claim_matrix.csv")
 with path.open(newline="", encoding="utf-8") as handle:
     rows = list(csv.DictReader(handle))
 
-assert len(rows) >= 25, f"expected at least 25 works, got {len(rows)}"
+assert len(rows) >= 50, f"expected at least 50 works, got {len(rows)}"
 status = Counter(row["status"] for row in rows)
 risk = Counter(row["direct_prior_risk"].split(":", 1)[0] for row in rows)
 assert set(risk) <= {"high", "medium", "low"}, risk
@@ -292,7 +301,7 @@ print(f"expanded matrix: {len(rows)} works; status={dict(status)}; risk={dict(ri
 PY
 ```
 
-Expected: at least 25 works, at least one `high` risk, and no assertion failure.
+Expected: at least 50 works, at least one `high` risk, and no assertion failure.
 
 - [ ] **Step 4: Commit**
 
@@ -382,14 +391,14 @@ git commit -m "docs: audit EuroSAT pilot evidence"
 
 ---
 
-### Task 5: Write at Most Three Candidate Mechanism Dossiers
+### Task 5: Run ARIS Idea Creation and Write At Most Three Candidates
 
 **Files:**
-- Create: `docs/research-direction/11_candidate_mechanism_dossiers.md`
+- Create or modify: `idea-stage/IDEA_REPORT.md`
 
 **Interfaces:**
 - Consumes: Tasks 2–4 evidence.
-- Produces: Candidate mechanisms that can be independently killed in Task 6.
+- Produces: The candidate section of the single ARIS composed report for novelty-check and research-review in Task 6.
 
 - [ ] **Step 1: Apply a fixed dossier schema**
 
@@ -409,7 +418,7 @@ For each candidate, use these exact subsections:
 ### Minimal 12–24-run probe
 ### A/T1 evidence path
 ### Compute feasibility on one RTX 5080
-### Kill argument
+### Rejection argument
 ### Current verdict
 ```
 
@@ -438,8 +447,8 @@ Reject a candidate immediately if its irreducible difference is only:
 Run:
 
 ```bash
-rg -n "first|首次|novel|全新|从未" docs/research-direction/11_candidate_mechanism_dossiers.md
-rg -n "Closest three prior works|Irreducible structural difference|Unique falsifiable predictions|Kill argument|Current verdict" docs/research-direction/11_candidate_mechanism_dossiers.md
+rg -n "first|首次|novel|全新|从未" idea-stage/IDEA_REPORT.md
+rg -n "Closest three prior works|Irreducible structural difference|Unique falsifiable predictions|Rejection argument|Current verdict" idea-stage/IDEA_REPORT.md
 ```
 
 Expected:
@@ -450,21 +459,22 @@ Expected:
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/research-direction/11_candidate_mechanism_dossiers.md
+git add idea-stage/IDEA_REPORT.md
 git commit -m "docs: propose falsifiable noisy-data mechanisms"
 ```
 
 ---
 
-### Task 6: Run Kill-Argument Review and Make the Gate Decision
+### Task 6: Run ARIS Novelty Check, Research Review, and Make the Gate Decision
 
 **Files:**
-- Create: `docs/research-direction/12_kill_argument_review.md`
-- Create: `docs/research-direction/13_novelty_gate_decision.md`
+- Modify: `idea-stage/IDEA_REPORT.md`
+- Create: `.aris/traces/novelty-check/...`
+- Create: `.aris/traces/research-review/...`
 
 **Interfaces:**
 - Consumes: Claim matrix, pilot audit, and candidate dossiers.
-- Produces: Exactly one authorized candidate or a binding `NO_GO`.
+- Produces: Exactly one authorized candidate or a binding `NO_GO`, inside the canonical ARIS report.
 
 - [ ] **Step 1: Review each candidate from the rejection position**
 
@@ -486,25 +496,34 @@ REVISE_AND_REAUDIT
 SURVIVES_FOR_PROBE
 ```
 
-- [ ] **Step 2: Obtain an independent review**
+- [ ] **Step 2: Run `/novelty-check` for each surviving candidate**
+
+Decompose each candidate into 3–5 core technical claims. Search at least three
+query formulations per claim, including the most recent six months, verify every
+closest-prior entry with `verify_papers.py`, and record the cross-model verdict
+and trace. Eliminate candidates whose mechanism is already implemented.
+
+- [ ] **Step 3: Obtain an independent `/research-review`**
 
 Give the reviewer only:
 
+- `RESEARCH_BRIEF.md`;
 - `08_novelty_audit_protocol.md`;
 - `09_adjacent_work_claim_matrix.csv`;
 - `10_phase1_pilot_audit.md`;
-- `11_candidate_mechanism_dossiers.md`;
+- the candidate sections in `idea-stage/IDEA_REPORT.md`;
 - the seven rejection questions above.
 
-Record the reviewer identity/backend, complete prompt, raw verdict, disagreements, and resolution in `12_kill_argument_review.md`. Do not let the candidate author silently override a `KILL`.
+Use ARIS composed mode. Store the full prompt and raw interaction in
+`.aris/traces/research-review/`; fold only the conclusions, disagreements,
+claims matrix, and prioritized fixes into `idea-stage/IDEA_REPORT.md`. Do not
+let the candidate author silently override a `KILL`.
 
-- [ ] **Step 3: Write the binding decision**
+- [ ] **Step 4: Write the binding decision**
 
-`13_novelty_gate_decision.md` must contain:
+`idea-stage/IDEA_REPORT.md` must contain exactly one of:
 
 ```markdown
-# 13 — Novelty Gate Decision
-
 ## Decision
 GO: Candidate X
 ```
@@ -512,8 +531,6 @@ GO: Candidate X
 or:
 
 ```markdown
-# 13 — Novelty Gate Decision
-
 ## Decision
 NO_GO
 ```
@@ -529,7 +546,7 @@ For `GO`, include:
 
 For `NO_GO`, list the overlap that killed each candidate and the next search domain. Do not promote a runner-up automatically.
 
-- [ ] **Step 4: Validate decision cardinality**
+- [ ] **Step 5: Validate decision cardinality**
 
 Run:
 
@@ -537,7 +554,7 @@ Run:
 uv run python - <<'PY'
 from pathlib import Path
 
-text = Path("docs/research-direction/13_novelty_gate_decision.md").read_text(encoding="utf-8")
+text = Path("idea-stage/IDEA_REPORT.md").read_text(encoding="utf-8")
 go_lines = [line for line in text.splitlines() if line.startswith("GO: ")]
 no_go_lines = [line for line in text.splitlines() if line == "NO_GO"]
 assert len(go_lines) + len(no_go_lines) == 1, (go_lines, no_go_lines)
@@ -548,10 +565,10 @@ PY
 
 Expected: `novelty decision: exactly one outcome`
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add docs/research-direction/12_kill_argument_review.md docs/research-direction/13_novelty_gate_decision.md
+git add idea-stage/IDEA_REPORT.md .aris/traces/novelty-check .aris/traces/research-review
 git commit -m "docs: decide noisy-data novelty gate"
 ```
 
@@ -565,7 +582,7 @@ git commit -m "docs: decide noisy-data novelty gate"
 - Modify: `docs/research-direction/07_recommendation.md`
 
 **Interfaces:**
-- Consumes: Binding decision from Task 6.
+- Consumes: Binding decision in `idea-stage/IDEA_REPORT.md` from Task 6.
 - Produces: A contradiction-free research state and the authorization boundary for the next design cycle.
 
 - [ ] **Step 1: Update the three current-state documents**
@@ -573,7 +590,7 @@ git commit -m "docs: decide noisy-data novelty gate"
 If the decision is `GO`:
 
 - replace provisional gap language with the exact audited claim;
-- link the closest-prior matrix and kill review;
+- link the closest-prior matrix and ARIS novelty/research review traces;
 - mark only the selected candidate as `authorized for mechanism-probe design`;
 - state that no GPU run is authorized until a separate experiment design is reviewed.
 

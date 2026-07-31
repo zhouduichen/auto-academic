@@ -61,7 +61,7 @@
 
 用于：
 
-- 研究问题与实验计划审查；
+- 通过 `research-lit → idea-creator → novelty-check → research-review → research-refine-pipeline` 完成文献地形、候选生成、查新、顶会级评审和实验计划；
 - 训练健康检查和结果完整性；
 - 结果到结论的证据映射；
 - 引用、论文主张和最强拒稿理由审计。
@@ -217,6 +217,7 @@ EuroSAT + ViT-B/16 + 16 个 LoRA 配置 × 3 seeds 的实验保留为 **developm
 1. 完成阶段 N 的针对性最新文献审计；
 2. 修复但不扩大上一轮 pilot 分析；
 3. 提交 2—3 个通过初步排雷的 A/T1 候选机制；
-4. 对每个候选执行 `/kill-argument` 式最强拒稿审查；
+4. 对每个候选执行 `/novelty-check`，再用 `/research-review` 做 idea-level 顶会拒稿审查；
 5. 用户确认后，才编写 12—24 次运行的机制探针计划；
-6. 在机制通过前，不启动大规模 GPU 实验，不写论文。
+6. `/kill-argument` 留到完整论文主张和草稿稳定后；
+7. 在机制通过前，不启动大规模 GPU 实验，不写论文。
