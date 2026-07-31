@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 from hashlib import sha256
 
@@ -74,6 +75,10 @@ def test_submit_checks_feature_and_sends_headers() -> None:
     assert requests[1].headers["Authorization"] == "Bearer top-secret"
     assert requests[1].headers["X-ARW-Client-Version"] == "0.1.0"
     assert requests[1].headers["Idempotency-Key"]
+    matrix = json.loads(requests[1].content)["matrix"]
+    assert "experiment_kind" not in matrix
+    assert "optimizer" not in matrix
+    assert "pulse" not in matrix
 
 
 def test_missing_feature_sends_zero_writes() -> None:

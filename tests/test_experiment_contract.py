@@ -111,6 +111,61 @@ def test_phase1_matrix_fields_match_deployed_server() -> None:
     assert request.matrix.batch_size == 32
 
 
+def test_m0_matrix_requires_typed_optimizer_and_pulse() -> None:
+    patch = "x"
+    base = {
+        "project_id": "optimizer-state-m0",
+        "source_commit": "a" * 40,
+        "title": "m0 sentinel",
+        "plan_id": "m0-a-l-0",
+        "candidate": {"patch_sha256": sha256(patch.encode()).hexdigest(), "patch": patch},
+        "matrix": {
+            "seeds": [0],
+            "time_budget_seconds": 5400,
+            "max_parallel": 1,
+            "experiment_kind": "optimizer_state_m0",
+            "optimizer": "adamw",
+            "pulse": "label_flip",
+            "warmup_steps": 500,
+            "replay_steps": 128,
+            "probe_size": 256,
+            "batch_size": 32,
+        },
+    }
+    request = ExperimentSubmitRequest.model_validate(base)
+    assert request.matrix.optimizer == "adamw"
+    assert request.matrix.pulse == "label_flip"
+
+    base["matrix"].pop("pulse")
+    with pytest.raises(ValidationError, match="pulse"):
+        ExperimentSubmitRequest.model_validate(base)
+
+
+def test_m0_matrix_rejects_phase1_config_id() -> None:
+    with pytest.raises(ValidationError, match="config_id"):
+        ExperimentSubmitRequest.model_validate(
+            {
+                "project_id": "optimizer-state-m0",
+                "source_commit": "a" * 40,
+                "title": "m0",
+                "plan_id": "m0",
+                "candidate": {
+                    "patch_sha256": sha256(b"x").hexdigest(),
+                    "patch": "x",
+                },
+                "matrix": {
+                    "seeds": [0],
+                    "time_budget_seconds": 5400,
+                    "max_parallel": 1,
+                    "experiment_kind": "optimizer_state_m0",
+                    "optimizer": "adamw",
+                    "pulse": "label_flip",
+                    "config_id": 0,
+                },
+            }
+        )
+
+
 def test_experiment_terminal_invariants() -> None:
     base = {
         "experiment_id": "exp-1",

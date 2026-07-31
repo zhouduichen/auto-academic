@@ -39,6 +39,7 @@ packages = ["src/arw"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
   "stage_a1: pinned inactive ARIS vendor snapshot gate",

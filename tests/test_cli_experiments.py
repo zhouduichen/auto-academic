@@ -160,6 +160,55 @@ def test_submit_builds_hash_and_matrix(tmp_path: Path, monkeypatch: object) -> N
     assert request.matrix.batch_size == 32
 
 
+def test_submit_builds_typed_m0_matrix(tmp_path: Path, monkeypatch: object) -> None:
+    install_fake(monkeypatch)
+    patch_file = tmp_path / "candidate.diff"
+    patch_file.write_text("patch")
+    result = runner.invoke(
+        cli.app,
+        [
+            "experiments",
+            "submit",
+            str(patch_file),
+            "--project-id",
+            "optimizer-state-m0",
+            "--source-commit",
+            "a" * 40,
+            "--title",
+            "sentinel",
+            "--plan-id",
+            "m0-a-l-0",
+            "--seed",
+            "0",
+            "--time-budget",
+            "5400",
+            "--max-parallel",
+            "1",
+            "--experiment-kind",
+            "optimizer_state_m0",
+            "--optimizer",
+            "adamw",
+            "--pulse",
+            "label_flip",
+            "--warmup-steps",
+            "500",
+            "--replay-steps",
+            "128",
+            "--probe-size",
+            "256",
+            "--batch-size",
+            "32",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    request = FakeClient.calls[0][1]
+    assert request.matrix.experiment_kind == "optimizer_state_m0"
+    assert request.matrix.optimizer == "adamw"
+    assert request.matrix.pulse == "label_flip"
+    assert request.matrix.warmup_steps == 500
+    assert request.matrix.replay_steps == 128
+
+
 def test_read_and_cancel_commands(monkeypatch: object) -> None:
     install_fake(monkeypatch)
     for arguments, expected in [

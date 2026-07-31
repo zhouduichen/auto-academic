@@ -86,16 +86,40 @@ class CandidatePatch(StrictModel):
 
 class ExperimentMatrix(StrictModel):
     seeds: list[int] = Field(min_length=1, max_length=32)
-    time_budget_seconds: int = Field(ge=30, le=3600)
+    time_budget_seconds: int = Field(ge=30, le=7200)
     max_parallel: int = Field(ge=1, le=8)
     config_id: int | None = Field(default=None, ge=0, le=63)
     epochs: int = Field(default=10, ge=1, le=100)
     batch_size: int = Field(default=32, ge=1, le=256)
+    experiment_kind: Literal["optimizer_state_m0"] | None = None
+    optimizer: Literal["adamw", "sgd"] | None = None
+    pulse: Literal["label_flip", "input_degradation"] | None = None
+    warmup_steps: int | None = Field(default=None, ge=1, le=2000)
+    replay_steps: int | None = Field(default=None, ge=1, le=512)
+    probe_size: int | None = Field(default=None, ge=32, le=1000)
 
     @model_validator(mode="after")
-    def validate_unique_seeds(self) -> "ExperimentMatrix":
+    def validate_matrix(self) -> "ExperimentMatrix":
         if len(self.seeds) != len(set(self.seeds)):
             raise ValueError("seeds must be unique")
+        if self.experiment_kind == "optimizer_state_m0":
+            if self.optimizer is None:
+                raise ValueError("optimizer is required for optimizer_state_m0")
+            if self.pulse is None:
+                raise ValueError("pulse is required for optimizer_state_m0")
+            if self.config_id is not None:
+                raise ValueError("config_id is forbidden for optimizer_state_m0")
+        elif any(
+            value is not None
+            for value in (
+                self.optimizer,
+                self.pulse,
+                self.warmup_steps,
+                self.replay_steps,
+                self.probe_size,
+            )
+        ):
+            raise ValueError("M0 fields require experiment_kind=optimizer_state_m0")
         return self
 
 

@@ -128,7 +128,7 @@ class ArwClient:
             try:
                 response = self._client.post(
                     path,
-                    json=payload.model_dump(mode="json"),
+                    json=payload.model_dump(mode="json", exclude_none=True),
                     headers={"Idempotency-Key": idempotency_key},
                 )
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:

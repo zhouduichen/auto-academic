@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 from pydantic import BaseModel, ValidationError
@@ -91,11 +91,21 @@ def experiments_submit(
     title: Annotated[str, typer.Option("--title")],
     plan_id: Annotated[str, typer.Option("--plan-id")],
     seed: Annotated[list[int], typer.Option("--seed")],
-    time_budget: Annotated[int, typer.Option("--time-budget", min=30, max=3600)],
+    time_budget: Annotated[int, typer.Option("--time-budget", min=30, max=7200)],
     max_parallel: Annotated[int, typer.Option("--max-parallel", min=1, max=8)],
     config_id: Annotated[int | None, typer.Option("--config-id", min=0, max=63)] = None,
     epochs: Annotated[int, typer.Option("--epochs", min=1, max=100)] = 10,
     batch_size: Annotated[int, typer.Option("--batch-size", min=1, max=256)] = 32,
+    experiment_kind: Annotated[
+        Literal["optimizer_state_m0"] | None, typer.Option("--experiment-kind")
+    ] = None,
+    optimizer: Annotated[Literal["adamw", "sgd"] | None, typer.Option("--optimizer")] = None,
+    pulse: Annotated[
+        Literal["label_flip", "input_degradation"] | None, typer.Option("--pulse")
+    ] = None,
+    warmup_steps: Annotated[int | None, typer.Option("--warmup-steps", min=1, max=2000)] = None,
+    replay_steps: Annotated[int | None, typer.Option("--replay-steps", min=1, max=512)] = None,
+    probe_size: Annotated[int | None, typer.Option("--probe-size", min=32, max=1000)] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     try:
@@ -113,6 +123,12 @@ def experiments_submit(
                 config_id=config_id,
                 epochs=epochs,
                 batch_size=batch_size,
+                experiment_kind=experiment_kind,
+                optimizer=optimizer,
+                pulse=pulse,
+                warmup_steps=warmup_steps,
+                replay_steps=replay_steps,
+                probe_size=probe_size,
             ),
         )
     except (OSError, UnicodeError) as exc:

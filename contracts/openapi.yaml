@@ -406,11 +406,23 @@ components:
           maxItems: 32
           uniqueItems: true
           items: {type: integer}
-        time_budget_seconds: {type: integer, minimum: 30, maximum: 3600}
+        time_budget_seconds: {type: integer, minimum: 30, maximum: 7200}
         max_parallel: {type: integer, minimum: 1, maximum: 8}
         config_id: {type: [integer, "null"], minimum: 0, maximum: 63}
         epochs: {type: integer, minimum: 1, maximum: 100, default: 10}
         batch_size: {type: integer, minimum: 1, maximum: 256, default: 32}
+        experiment_kind:
+          type: [string, "null"]
+          enum: [optimizer_state_m0, null]
+        optimizer:
+          type: [string, "null"]
+          enum: [adamw, sgd, null]
+        pulse:
+          type: [string, "null"]
+          enum: [label_flip, input_degradation, null]
+        warmup_steps: {type: [integer, "null"], minimum: 1, maximum: 2000}
+        replay_steps: {type: [integer, "null"], minimum: 1, maximum: 512}
+        probe_size: {type: [integer, "null"], minimum: 32, maximum: 1000}
     ExperimentSubmitRequest:
       type: object
       additionalProperties: false
