@@ -84,6 +84,33 @@ def test_matrix_seeds_are_unique() -> None:
         )
 
 
+def test_phase1_matrix_fields_match_deployed_server() -> None:
+    patch = "x"
+    request = ExperimentSubmitRequest.model_validate(
+        {
+            "project_id": "reliablepeft-phase1",
+            "source_commit": "a" * 40,
+            "title": "smoke",
+            "plan_id": "s0",
+            "candidate": {
+                "patch_sha256": sha256(patch.encode()).hexdigest(),
+                "patch": patch,
+            },
+            "matrix": {
+                "seeds": [99],
+                "time_budget_seconds": 600,
+                "max_parallel": 1,
+                "config_id": 0,
+                "epochs": 1,
+                "batch_size": 32,
+            },
+        }
+    )
+    assert request.matrix.config_id == 0
+    assert request.matrix.epochs == 1
+    assert request.matrix.batch_size == 32
+
+
 def test_experiment_terminal_invariants() -> None:
     base = {
         "experiment_id": "exp-1",

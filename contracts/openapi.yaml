@@ -408,6 +408,9 @@ components:
           items: {type: integer}
         time_budget_seconds: {type: integer, minimum: 30, maximum: 3600}
         max_parallel: {type: integer, minimum: 1, maximum: 8}
+        config_id: {type: [integer, "null"], minimum: 0, maximum: 63}
+        epochs: {type: integer, minimum: 1, maximum: 100, default: 10}
+        batch_size: {type: integer, minimum: 1, maximum: 256, default: 32}
     ExperimentSubmitRequest:
       type: object
       additionalProperties: false
