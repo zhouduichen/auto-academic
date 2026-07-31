@@ -43,6 +43,18 @@ All branches replay identical clean batches, augmentations, sample IDs, and RNG 
 The three bundles are the experimental units; horizon rows are repeated measurements,
 not independent samples.
 
+### Batch-major execution
+
+The implementation must execute replay batch-major rather than branch-major. Each
+planned batch is decoded, transformed, pinned, and transferred to the GPU once. The GPU
+then advances all five branch snapshots on that same resident batch before requesting the
+next batch. Each branch keeps an independent model/optimizer/RNG snapshot, so changing
+execution order does not change its mathematical trajectory.
+
+This removes fivefold repeated image preparation in M0.5 and creates a longer GPU work
+window per host-to-device transfer. A deterministic parity test must compare batch-major
+and branch-major execution on a tiny model before the optimized schedule is accepted.
+
 ## 4. Outcomes and Attribution Rule
 
 The primary outcome is signed AUC of clean-loss excess over 128 replay steps relative to
@@ -120,17 +132,27 @@ algorithm and hyperparameter rule are frozen for formal evidence.
 The process may be affinitized to at most 10 logical CPU cores, but routine work is kept
 well below that ceiling:
 
-- `torch.set_num_threads(4)` and one inter-op thread;
-- `DataLoader(num_workers=2, pin_memory=True, persistent_workers=True,
-  prefetch_factor=2)`;
+- `torch.set_num_threads(4)` and one inter-op thread in the main process;
+- each DataLoader worker is restricted to one PyTorch thread;
+- a plan-indexed batch dataset with
+  `DataLoader(batch_size=None, num_workers=2, pin_memory=True,
+  persistent_workers=True, prefetch_factor=2)`;
 - one experiment at a time, Windows priority `BelowNormal`;
-- asynchronous host-to-device copies and a GPU-fitting batch size;
+- non-blocking host-to-device copies using the standard PyTorch stream;
+- batch-major replay: one prepared batch feeds all five branch updates;
 - no parallel seed execution and no CPU-heavy online corruption generation.
 
 CIFAR-100 is memory-resident and this configuration should feed one RTX 5080 without
 requiring high CPU utilization. GPU utilization is not itself a scientific objective;
 throughput and wall-clock are. Worker count must not be raised merely to make the GPU
 utilization graph look higher.
+
+Record data-wait time, GPU-step time, and examples per second. A median data-wait share
+below 5% is a tuning target rather than a scientific pass condition. If it is higher,
+first verify pinned transfer and the prefetch queue; do not raise the worker count above
+two merely to improve the utilization display. Batch size, precision, and numerical
+kernels remain identical to valid M0 so utilization tuning cannot change the scientific
+comparison.
 
 ## 8. Audit and Failure Handling
 
@@ -147,7 +169,9 @@ Required tests before submission:
 3. `v-only` changes no parameter or `m` tensor at horizon zero;
 4. branch norm and RNG invariants;
 5. deterministic tiny-model replay;
-6. artifact and source-commit validation.
+6. batch-major versus branch-major trajectory parity;
+7. one prepared replay batch is consumed by every branch before it is released;
+8. artifact and source-commit validation.
 
 ## 9. Stop Conditions
 
@@ -158,4 +182,3 @@ Stop the method line if any of the following occurs:
 - gains require additional passes, a clean reference set, or knowledge of noise rate;
 - the clean non-inferiority or 5% efficiency limits fail;
 - the mechanism is claim-equivalent to a verified direct prior.
-
