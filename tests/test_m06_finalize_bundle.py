@@ -34,6 +34,9 @@ def _write_tiny_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(m0, "CIFAR100", lambda **_: FakeCIFAR100())
     monkeypatch.setattr(m0, "build_model", lambda _: TinyVisionModel())
     output_dir = tmp_path / "bundle"
+    output_dir.mkdir()
+    stdout_path = output_dir / "stdout.log"
+    stdout_path.write_text("starting\n", encoding="utf-8")
     m0.run(
         m0.RunConfig(
             optimizer="adamw",
@@ -57,7 +60,8 @@ def _write_tiny_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         tmp_path / "data",
         output_dir,
     )
-    (output_dir / "stdout.log").write_text("completed\n", encoding="utf-8")
+    with stdout_path.open("a", encoding="utf-8") as stream:
+        stream.write("completed\n")
     return output_dir
 
 

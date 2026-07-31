@@ -36,6 +36,11 @@ def _verify_existing_manifest(output_dir: Path) -> None:
         filename = item.get("filename")
         if not isinstance(filename, str) or filename == "sha256_manifest.json":
             raise ValueError("SHA-256 manifest filename is invalid")
+        # The launcher opens stdout.log before the runner writes its manifest and
+        # keeps appending until the runner exits. Validate its final bytes below,
+        # then replace the manifest atomically with the completed-log hash.
+        if filename == "stdout.log":
+            continue
         path = output_dir / filename
         if not path.is_file() or _file_record(path) != item:
             raise ValueError(f"artifact hash mismatch: {filename}")
