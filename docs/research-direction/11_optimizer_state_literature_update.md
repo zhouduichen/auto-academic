@@ -30,7 +30,7 @@
 
 ## 候选发现与去重
 
-发现结果按 `DOI > arXiv ID > normalized title` 去重。正式发表版取代预印本的 venue 元数据，但保留 arXiv 链接。首轮共固化 20 个 work：12 个进入 `deep_read`，8 个作为机制或应用 `context`；完整字段见 `12_optimizer_state_claim_matrix.csv`。
+发现结果按 `DOI > arXiv ID > normalized title` 去重。正式发表版取代预印本的 venue 元数据，但保留 arXiv 链接。首轮固化 20 个 work；两次反查继续发现 HCO、QHAdam、ADOPT、CAdam、AdaShift 与 Grams，当前矩阵共 26 个 work：16 个进入 `deep_read`，10 个作为机制或应用 `context`；完整字段见 `12_optimizer_state_claim_matrix.csv`。
 
 去重中发现一个必须显式保留的版本陷阱：`arXiv:2502.17055` 的早期版本对应 Stable-SPAM（O06），当前 v3 已改为 GradientStabilizer（O07）。O06 因此锚定 ICLR SCOPE 的 OpenReview 正式页面，O07 锚定当前 arXiv/ICML 版本；二者不能合并成一篇同名同方法工作。
 
@@ -40,6 +40,8 @@
 2. 直接稳健化或重置：TAdam（O02）、AdaR（O04）、SPAM（O05）、Stable-SPAM（O06）、GradientStabilizer（O07）、Adam-Rel（O10）。
 3. 状态通道路由或交叉耦合：DP-AdamBC（O03）、Adaptive-OGP（O08）、AdaMomentum（O20）。
 4. 一致性和 noisy-label 应用：Cautious Optimizers（O11）、GAL（O12）、ELR（O13）以及 noisy-PEFT/近期强基线（O14–O17）、MGUP（O18）、adaptive t-momentum（O19）。
+5. 反查补入的直接与结构先例：按可信梯度源选择性写入状态的 HCO（O21），以及显式混合瞬时梯度与历史动量的 QHM/QHAdam（O22）。
+6. 时序解耦与参数门控补充：ADOPT（O23）与 AdaShift（O25）错开当前梯度和二阶矩路径；CAdam（O24）在 noisy online learning 中做梯度—动量参数门控；Grams（O26）分解当前方向与动量幅值。
 
 ## 直接威胁深读
 
@@ -53,6 +55,9 @@
 - Cautious Optimizers（O11）使用当前梯度与 optimizer update 的逐坐标符号一致性，但在标准 `m/v` 已更新之后才遮罩参数步。因此“agreement signal”已有直接先例，而“只改变持久写入位置”仍是必须单独验证的差别。
 - GAL（O12）直接把跨模型梯度一致性用于抑制 noisy-label memorization，但需要三模型流程；它排除了“梯度一致性首次用于标签噪声”的表述，不等价于单模型状态门控。
 - DP-AdamBC（O03）证明可只校正二阶矩通道，但依赖已知 DP 高斯噪声方差。它不能外推为未知标签噪声下的校正器。
+- HCO（O21）让可信标注梯度先建立 momentum/variance 状态，只让与可信动量逐坐标同号的未标注梯度继续细化状态；论文明确把这解释为防止不可信梯度污染未来 moment buffer。这是对“选择性状态写入”最直接的先例。其关键差别不是成本，而是它需要一个分离、可信的标注梯度源；普通 noisy-label 训练没有这一参照，并且不会自然产生两路独立梯度。
+- ADOPT（O23）用过去的 `v` 先归一化当前梯度，再写入 `m`，并在参数步后才把当前平方写入 `v`；AdaShift（O25）则用固定时间延迟把不同时间片路由给 `m/v`。二者使“当前梯度与同时刻二阶矩解耦”以及“不同时间片进入不同状态”都不是新主张，但它们不会识别或永久阻断可疑样本。
+- CAdam（O24）已经在标签噪声/分布漂移场景使用梯度—动量符号一致性：先照常更新 `m/v`，再暂停不一致坐标的参数步。它和 Cautious 一样保留了被拒绝梯度对未来状态的污染，正好构成候选的关键介入位置对照。
 
 O09 提供了关键因果支持：即使局部样本多重集相同，fixed-clock momentum/AdamW memory 也可能令顺序差异产生一阶端点效应；但该结果是局部测量理论，不是 noisy-label 方法，也不能替代本项目自己的多 seed 验证。
 
@@ -67,15 +72,26 @@ O09 提供了关键因果支持：即使局部样本多重集相同，fixed-cloc
 - “周期性重置一、二阶矩”（O04–O06）；
 - “不同信号进入不同 moment pathway”（O03、O08、O20）；
 - “梯度—动量/梯度—梯度一致性用于门控”（O11、O12、O18）；
+- “按可信/不可信梯度源选择性允许 moment refinement”（O21）；
+- “在参数步中显式分开当前梯度与历史动量贡献”（O22）；
+- “当前梯度不参与同一步二阶矩归一化、或延迟进入 `v`”（O23、O25）；
+- “标签噪声下用梯度—动量符号一致性暂停参数坐标更新”（O24）；
 - “PEFT 容量或路由可以抵抗标签噪声”（O14–O16）。
 
-在候选冻结前仍可保留、但不能宣称成立的差异是：`current update effect` 与 `persistent state effect` 的显式分离；单模型 noisy-label PEFT 中的 `m-only` 证据；以及相对 AdamW/clipping/TAdam/SPAM/Cautious 的真实 wall-clock–accuracy Pareto 改善。任何 M1 后方法都至少要对 O02、O05、O07、O08、O11 做逐式对照。
+在候选冻结前仍可保留、但不能宣称成立的差异是：按质量而非固定时序决定 `current update effect` 与 `persistent state effect`；单模型 noisy-label PEFT 中的 `m-only` 证据；以及相对 AdamW/clipping/TAdam/SPAM/Cautious/CAdam/ADOPT 的真实 wall-clock–accuracy Pareto 改善。任何 M1 后方法都至少要对 O02、O05、O07、O08、O11、O21–O25 做逐式对照。
 
-最强拒稿论点目前是：候选可能只是 TAdam 的鲁棒一阶矩、Cautious 的 agreement mask 与 SPAM 的污染叙事的重新组合；如果没有“保留当前作用、只阻断未来写入”的精确 recurrence、对应反事实消融和 noisy-PEFT 实证，就不足以形成独立方法贡献。
+最强拒稿论点目前是：候选可能只是 TAdam 的鲁棒一阶矩、Cautious/CAdam/HCO 的 agreement mask、QHAdam/ADOPT/AdaShift 的当前—历史或时序分解与 SPAM 的污染叙事的重新组合；如果没有“无可信干净梯度源时，按质量保留当前作用、只阻断未来写入”的精确 recurrence、对应反事实消融和 noisy-PEFT 实证，就不足以形成独立方法贡献。
 
 ## 饱和检查
 
-关闭 L0 需要两轮互不重复的反查查询连续不再增加新的 `critical` 或 `deep_read` 工作。首轮 18 条查询、三类 helper 和 20-work 去重矩阵已完成；当前尚未执行 S1/S2 反查，因此不宣称饱和。
+关闭 L0 需要两轮互不重复的反查查询连续不再增加新的 `critical` 或 `deep_read` 工作。首轮 18 条查询与三类 helper 完成后，首次反查（日志 `S0-R1`–`S0-R8`）发现 HCO（O21），第二次 lineage/alias 反查（`S0B-R01`–`S0B-R16`）又发现 ADOPT、CAdam 与 AdaShift（O23–O25）；每次均按规则清零饱和计数。QHAdam 与 Grams（O22/O26）作为结构背景补入。
+
+从扩展后的 26-work 矩阵重新计数，现已连续通过两轮独立反查：
+
+- S1（`S1-R1`–`S1-R4`）使用 `selective moment`、`exclude current gradient`、`gradient-momentum alignment + label noise`、`trusted gradient + momentum state` 四组别名，只有 O18、O21、O23–O25 的重复命中。
+- S2（`S2-R1`–`S2-R4`）改用 `skip optimizer state update`、`freeze momentum`、`momentum contamination + label noise`、`gate momentum update`，只有 O11、O21、O24 及无关的 optimizer-aware data scoring/诊断工作。
+
+两轮均未增加新的 `critical` 或 `deep_read` work；L0 因而在 **2026-07-31T23:40:57+08:00** 达到本协议定义的检索饱和。这里的“饱和”只表示固定主题和别名反查不再产生直接先例，不等价于全领域穷尽，也不构成候选新颖性结论。
 
 ## L1 待候选冻结的精确问题
 
@@ -87,6 +103,10 @@ L1 只在 M1 数据支持并冻结精确 recurrence 后启动，逐项回答：
 4. 与 SPAM/GradientStabilizer（O05/O07）的 upstream transform 相比，是否仅把同一缩放移了位置？
 5. 与 Adaptive-OGP（O08）的 moment routing 相比，信号、状态方向和额外计算合同是否实质不同？
 6. 与 Cautious/MGUP（O11/O18）的 alignment mask 相比，是否只剩介入位置差异，且该差异是否由实验因果支持？
-7. 对 `m-only`、`v-only`、`m/v coupled`、current-only、state-only 的反事实消融能否唯一支持主张？
+7. 与 HCO（O21）相比，在没有可信标注梯度源、没有双路 gradient computation 时，检测器和状态写入合同是否仍成立？
+8. 与 QHAdam（O22）相比，当前—历史分离是否只是一组固定混合系数，还是由污染假设驱动的选择性介入？
+9. 与 ADOPT/AdaShift（O23/O25）相比，是否只是把 `v` 的固定时间延迟改写成另一种时序重排？
+10. 与 CAdam（O24）相比，状态门控是否带来超出参数步门控的可测未来影响？
+11. 对 `m-only`、`v-only`、`m/v coupled`、current-only、state-only 的反事实消融能否唯一支持主张？
 
 L0 不提前填写 candidate-overlap，也不把内部的 A/T1 证据门槛表述为会议录用保证。
