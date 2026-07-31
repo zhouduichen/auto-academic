@@ -12,6 +12,8 @@ import io
 import json
 import os
 import random
+import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -65,6 +67,8 @@ class RunConfig:
     lora_rank: int
     device: str
     state_attribution: bool = False
+    replay_seed: int | None = None
+    probe_seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,84 @@ def _state_sha(value: object) -> str:
     buffer = io.BytesIO()
     torch.save(value, buffer)
     return sha256(buffer.getvalue()).hexdigest()
+
+
+def _file_sha(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
+
+
+def build_provenance(device: torch.device) -> dict[str, object]:
+    repo_root = Path(__file__).resolve().parents[2]
+    git_executable = shutil.which("git")
+    try:
+        if git_executable is None:
+            raise OSError("git executable is unavailable")
+        source_commit = subprocess.run(  # noqa: S603 - fixed git arguments
+            [git_executable, "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        source_dirty = bool(
+            subprocess.run(  # noqa: S603 - fixed git arguments
+                [git_executable, "status", "--porcelain", "--untracked-files=no"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        if device.type == "cuda":
+            raise RuntimeError("source provenance is unavailable") from error
+        source_commit = "unavailable"
+        source_dirty = True
+    lock_path = repo_root / "uv.lock"
+    if not lock_path.is_file():
+        if device.type == "cuda":
+            raise RuntimeError("uv.lock is unavailable")
+        lock_sha256 = "unavailable"
+    else:
+        lock_sha256 = _file_sha(lock_path)
+    if device.type == "cuda" and source_dirty:
+        raise RuntimeError("CUDA evidence runs require a clean tracked worktree")
+    return {
+        "source_commit": source_commit,
+        "source_dirty": source_dirty,
+        "uv_lock_sha256": lock_sha256,
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+    }
+
+
+def _optimizer_projection(optimizer: dict[str, object], key: str) -> dict[str, object]:
+    raw_state = optimizer.get("state")
+    if not isinstance(raw_state, dict):
+        raise ValueError("optimizer state is malformed")
+    projection: dict[str, object] = {}
+    for parameter_id in sorted(raw_state, key=str):
+        parameter_state = raw_state[parameter_id]
+        if not isinstance(parameter_state, dict) or key not in parameter_state:
+            raise ValueError(f"optimizer state is missing {key}")
+        projection[str(parameter_id)] = parameter_state[key]
+    return projection
+
+
+def build_branch_construction_manifest(
+    branches: dict[str, BranchState], branch_rng: RngState
+) -> dict[str, object]:
+    rng_sha256 = _state_sha(branch_rng)
+    return {
+        branch_name: {
+            "parameters_sha256": _state_sha(branch.parameters),
+            "exp_avg_sha256": _state_sha(_optimizer_projection(branch.optimizer, "exp_avg")),
+            "exp_avg_sq_sha256": _state_sha(_optimizer_projection(branch.optimizer, "exp_avg_sq")),
+            "optimizer_step_sha256": _state_sha(_optimizer_projection(branch.optimizer, "step")),
+            "rng_sha256": rng_sha256,
+        }
+        for branch_name, branch in branches.items()
+    }
 
 
 def seed_everything(seed: int) -> None:
@@ -421,6 +503,8 @@ def write_artifacts(
     pulse_plan: BatchPlan,
     replay_plans: list[BatchPlan],
     checkpoint_manifest: dict[str, object],
+    branch_construction_manifest: dict[str, object] | None,
+    provenance: dict[str, object],
     rows: list[dict[str, object]],
     summary: dict[str, object],
 ) -> None:
@@ -448,6 +532,11 @@ def write_artifacts(
     (output_dir / "checkpoint_manifest.json").write_text(
         _stable_json(checkpoint_manifest), encoding="utf-8"
     )
+    if branch_construction_manifest is not None:
+        (output_dir / "branch_construction_manifest.json").write_text(
+            _stable_json(branch_construction_manifest), encoding="utf-8"
+        )
+    (output_dir / "provenance.json").write_text(_stable_json(provenance), encoding="utf-8")
     (output_dir / "trajectory_metrics.jsonl").write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
         encoding="utf-8",
@@ -475,18 +564,32 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
     if config.state_attribution and (config.optimizer != "adamw" or config.pulse != "label_flip"):
         raise ValueError("state attribution requires AdamW with label_flip")
     device = torch.device(config.device)
+    provenance = build_provenance(device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
     dataset = CIFAR100(root=data_dir, train=True, download=True, transform=None)
     train_indices, validation_indices = stratified_split(dataset.targets, config.split_seed)
-    probe_rng = np.random.default_rng(config.split_seed + config.seed)
+    effective_probe_seed = (
+        config.probe_seed if config.probe_seed is not None else config.split_seed + config.seed
+    )
+    probe_rng = np.random.default_rng(effective_probe_seed)
     probe_indices = probe_rng.choice(validation_indices, config.probe_size, replace=False).tolist()
-    plan_count = config.warmup_steps + 1 + config.replay_steps
-    plans = build_batch_plans(train_indices, plan_count, config.batch_size, config.seed)
-    warmup_plans = plans[: config.warmup_steps]
-    pulse_plan = plans[config.warmup_steps]
-    replay_plans = plans[config.warmup_steps + 1 :]
+    if config.replay_seed is None:
+        plan_count = config.warmup_steps + 1 + config.replay_steps
+        plans = build_batch_plans(train_indices, plan_count, config.batch_size, config.seed)
+        warmup_plans = plans[: config.warmup_steps]
+        pulse_plan = plans[config.warmup_steps]
+        replay_plans = plans[config.warmup_steps + 1 :]
+    else:
+        pre_replay_plans = build_batch_plans(
+            train_indices, config.warmup_steps + 1, config.batch_size, config.seed
+        )
+        warmup_plans = pre_replay_plans[: config.warmup_steps]
+        pulse_plan = pre_replay_plans[config.warmup_steps]
+        replay_plans = build_batch_plans(
+            train_indices, config.replay_steps, config.batch_size, config.replay_seed
+        )
     if len(replay_plans) != config.replay_steps:
         raise RuntimeError("replay schedule length mismatch")
 
@@ -505,7 +608,7 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
     pre_optimizer = capture_optimizer_state(optimizer)
     clean_images, clean_labels = materialize_batch(dataset, pulse_plan, device)
     corrupt_images, corrupt_labels = corrupt_pulse(
-        config.pulse, clean_images, clean_labels, config.pulse_seed + config.seed
+        config.pulse, clean_images, clean_labels, config.pulse_seed
     )
     model.train()
     pre_candidate_rng = capture_rng_state()
@@ -540,6 +643,11 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
         build_state_carrier_branches(clean, corrupt)
         if config.state_attribution
         else build_causal_branches(clean, corrupt)
+    )
+    branch_construction_manifest = (
+        build_branch_construction_manifest(branches, clean_post_rng)
+        if config.state_attribution
+        else None
     )
     branch_names = tuple(branches)
     replay_batches_cpu = None
@@ -616,9 +724,15 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
     summary = {
         "status": "succeeded",
         "bundle_id": (
-            f"m05-{config.optimizer}-{config.pulse}-seed{config.seed}"
+            f"m06-{config.optimizer}-{config.pulse}-train{config.seed}-pulse{config.pulse_seed}"
             if config.state_attribution
-            else f"{config.optimizer}-{config.pulse}-seed{config.seed}"
+            and config.replay_seed is not None
+            and config.probe_seed is not None
+            else (
+                f"m05-{config.optimizer}-{config.pulse}-seed{config.seed}"
+                if config.state_attribution
+                else f"{config.optimizer}-{config.pulse}-seed{config.seed}"
+            )
         ),
         "primary_endpoint": branch_summary[primary_branch],
         "branches": branch_summary,
@@ -626,6 +740,7 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
         "peak_vram_gb": peak_vram,
         "train_steps": config.warmup_steps + 2 + len(branch_names) * config.replay_steps,
         "test_loaded": False,
+        "source_commit": provenance["source_commit"],
     }
     write_artifacts(
         output_dir,
@@ -637,6 +752,8 @@ def run(config: RunConfig, data_dir: Path, output_dir: Path) -> dict[str, object
         pulse_plan,
         replay_plans,
         checkpoint_manifest,
+        branch_construction_manifest,
+        provenance,
         all_rows,
         summary,
     )
@@ -647,7 +764,11 @@ def parse_args() -> tuple[RunConfig, Path, Path]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--optimizer", choices=("adamw", "sgd"), required=True)
     parser.add_argument("--pulse", choices=("label_flip", "input_degradation"), required=True)
-    parser.add_argument("--seed", type=int, choices=(0, 1, 2), required=True)
+    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--split-seed", type=int, default=20_260_731)
+    parser.add_argument("--pulse-seed", type=int, default=314_159)
+    parser.add_argument("--replay-seed", type=int)
+    parser.add_argument("--probe-seed", type=int)
     parser.add_argument("--data-dir", type=Path, default=Path("./data/cifar100"))
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--warmup-steps", type=int, default=500)
@@ -657,13 +778,20 @@ def parse_args() -> tuple[RunConfig, Path, Path]:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--state-attribution", action="store_true")
     args = parser.parse_args()
+    seed_values = (args.seed, args.split_seed, args.pulse_seed)
+    if args.replay_seed is not None:
+        seed_values += (args.replay_seed,)
+    if args.probe_seed is not None:
+        seed_values += (args.probe_seed,)
+    if any(value < 0 for value in seed_values):
+        parser.error("all seeds must be nonnegative")
     learning_rate = 3e-4 if args.optimizer == "adamw" else 1e-2
     config = RunConfig(
         optimizer=args.optimizer,
         pulse=args.pulse,
         seed=args.seed,
-        split_seed=20_260_731,
-        pulse_seed=314_159,
+        split_seed=args.split_seed,
+        pulse_seed=args.pulse_seed,
         warmup_steps=args.warmup_steps,
         replay_steps=args.replay_steps,
         batch_size=args.batch_size,
@@ -674,6 +802,8 @@ def parse_args() -> tuple[RunConfig, Path, Path]:
         lora_rank=8,
         device=args.device,
         state_attribution=args.state_attribution,
+        replay_seed=args.replay_seed,
+        probe_seed=args.probe_seed,
     )
     return config, args.data_dir, args.output_dir
 

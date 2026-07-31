@@ -1,5 +1,7 @@
+import json
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -60,6 +62,7 @@ def test_small_sgd_bundle_is_reproducible_and_writes_audit_artifacts(
         "split_ids.json",
         "replay_manifest.json",
         "checkpoint_manifest.json",
+        "provenance.json",
         "trajectory_metrics.jsonl",
         "summary.json",
         "sha256_manifest.json",
@@ -102,6 +105,67 @@ def test_small_m05_bundle_writes_five_state_carrier_trajectories(
     )
     assert summary["train_steps"] == 13
     assert summary["test_loaded"] is False
+    assert (tmp_path / "m05" / "branch_construction_manifest.json").is_file()
+    assert (tmp_path / "m05" / "provenance.json").is_file()
+
+
+def test_explicit_m06_seeds_split_replay_probe_and_pulse_randomness(
+    tmp_path: object, monkeypatch: object
+) -> None:
+    monkeypatch.setattr(m0, "CIFAR100", lambda **_: FakeCIFAR100())
+    monkeypatch.setattr(m0, "build_model", lambda _: TinyVisionModel())
+    plan_calls: list[tuple[int, int]] = []
+    original_build_batch_plans = m0.build_batch_plans
+    original_corrupt_pulse = m0.corrupt_pulse
+    pulse_seeds: list[int] = []
+
+    def capture_plans(
+        train_indices: list[int], count: int, batch_size: int, seed: int
+    ) -> list[m0.BatchPlan]:
+        plan_calls.append((count, seed))
+        return original_build_batch_plans(train_indices, count, batch_size, seed)
+
+    def capture_pulse(
+        pulse: str, images: torch.Tensor, labels: torch.Tensor, pulse_seed: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        pulse_seeds.append(pulse_seed)
+        return original_corrupt_pulse(pulse, images, labels, pulse_seed)
+
+    monkeypatch.setattr(m0, "build_batch_plans", capture_plans)
+    monkeypatch.setattr(m0, "corrupt_pulse", capture_pulse)
+    config = m0.RunConfig(
+        optimizer="adamw",
+        pulse="label_flip",
+        seed=3,
+        split_seed=123,
+        pulse_seed=271_828,
+        warmup_steps=1,
+        replay_steps=2,
+        batch_size=2,
+        probe_size=2,
+        learning_rate=0.01,
+        weight_decay=0.0,
+        model_id="unused",
+        lora_rank=1,
+        device="cpu",
+        state_attribution=True,
+        replay_seed=420_003,
+        probe_seed=20260806,
+    )
+    output_dir = tmp_path / "m06"
+
+    summary = m0.run(config, tmp_path / "data", output_dir)
+
+    assert plan_calls == [(2, 3), (2, 420_003)]
+    assert pulse_seeds == [271_828]
+    split = json.loads((output_dir / "split_ids.json").read_text(encoding="utf-8"))
+    expected_probe = (
+        np.random.default_rng(20260806)
+        .choice(split["validation"], config.probe_size, replace=False)
+        .tolist()
+    )
+    assert split["probe"] == expected_probe
+    assert summary["bundle_id"] == "m06-adamw-label_flip-train3-pulse271828"
 
 
 def test_label_flip_changes_every_label() -> None:
