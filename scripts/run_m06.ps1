@@ -64,9 +64,12 @@ function Invoke-Bundle {
     }
     New-Item -ItemType Directory -Path $BundleDir | Out-Null
     $stdoutPath = Join-Path $BundleDir "stdout.log"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $Python -m experiments.m0_optimizer_state.m0_run @RunArguments 2>&1 |
         Tee-Object -FilePath $stdoutPath
     $runnerExit = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
     if ($runnerExit -ne 0) {
         throw "runner failed with exit code ${runnerExit}: $BundleDir"
     }
