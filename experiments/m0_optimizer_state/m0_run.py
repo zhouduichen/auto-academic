@@ -26,7 +26,7 @@ from peft import LoraConfig, TaskType, get_peft_model
 from torch import Tensor, nn
 from torchvision.datasets import CIFAR100
 from torchvision.transforms import functional as vision
-from transformers import ViTForImageClassification
+from transformers import ViTForImageClassification, ViTModel
 
 from arw.m0_core import (
     BranchState,
@@ -204,11 +204,27 @@ def materialize_probe(
 
 
 def build_model(config: RunConfig) -> nn.Module:
-    base = ViTForImageClassification.from_pretrained(
+    backbone, loading_info = ViTModel.from_pretrained(
         config.model_id,
-        num_labels=100,
-        ignore_mismatched_sizes=True,
+        output_loading_info=True,
     )
+    anomaly_fields = (
+        "missing_keys",
+        "unexpected_keys",
+        "mismatched_keys",
+        "error_msgs",
+    )
+    anomalies = {
+        field: loading_info.get(field, [])
+        for field in anomaly_fields
+        if loading_info.get(field)
+    }
+    if anomalies:
+        raise RuntimeError(f"ViT backbone load audit failed: {anomalies}")
+
+    backbone.config.num_labels = 100
+    base = ViTForImageClassification(backbone.config)
+    base.vit = backbone
     lora = LoraConfig(
         task_type=TaskType.FEATURE_EXTRACTION,
         r=config.lora_rank,
