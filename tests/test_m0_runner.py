@@ -1,8 +1,9 @@
 from types import SimpleNamespace
 
+import pytest
 import torch
 from PIL import Image
-from transformers import ViTConfig, ViTForImageClassification
+from transformers import ViTConfig, ViTForImageClassification, ViTModel
 
 import experiments.m0_optimizer_state.m0_run as m0
 
@@ -73,24 +74,20 @@ def test_label_flip_changes_every_label() -> None:
     assert torch.all(corrupt != labels)
 
 
-def test_build_model_trains_only_lora_and_classifier(monkeypatch: object) -> None:
-    tiny = ViTForImageClassification(
-        ViTConfig(
-            image_size=32,
-            patch_size=16,
-            hidden_size=16,
-            num_hidden_layers=1,
-            num_attention_heads=2,
-            intermediate_size=32,
-            num_labels=100,
-        )
+def _tiny_vit_config() -> ViTConfig:
+    return ViTConfig(
+        image_size=32,
+        patch_size=16,
+        hidden_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        intermediate_size=32,
+        num_labels=100,
     )
-    monkeypatch.setattr(
-        m0.ViTForImageClassification,
-        "from_pretrained",
-        lambda *_args, **_kwargs: tiny,
-    )
-    config = m0.RunConfig(
+
+
+def _adamw_config() -> m0.RunConfig:
+    return m0.RunConfig(
         optimizer="adamw",
         pulse="label_flip",
         seed=0,
@@ -107,7 +104,33 @@ def test_build_model_trains_only_lora_and_classifier(monkeypatch: object) -> Non
         device="cpu",
     )
 
-    model = m0.build_model(config)
+
+def test_build_model_loads_audited_backbone_then_adds_classifier(
+    monkeypatch: object,
+) -> None:
+    tiny_backbone = ViTModel(_tiny_vit_config())
+    monkeypatch.setattr(
+        ViTModel,
+        "from_pretrained",
+        lambda *_args, **_kwargs: (
+            tiny_backbone,
+            {
+                "missing_keys": set(),
+                "unexpected_keys": set(),
+                "mismatched_keys": set(),
+                "error_msgs": [],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        m0.ViTForImageClassification,
+        "from_pretrained",
+        lambda *_args, **_kwargs: pytest.fail(
+            "classifier wrapper must not load pretrained backbone weights"
+        ),
+    )
+
+    model = m0.build_model(_adamw_config())
     trainable_names = {
         name for name, parameter in model.named_parameters() if parameter.requires_grad
     }
@@ -115,3 +138,29 @@ def test_build_model_trains_only_lora_and_classifier(monkeypatch: object) -> Non
     assert any("lora_" in name for name in trainable_names)
     assert any("classifier" in name for name in trainable_names)
     assert all("lora_" in name or "classifier" in name for name in trainable_names)
+
+
+@pytest.mark.parametrize("field", ["missing_keys", "unexpected_keys"])
+def test_build_model_fails_closed_on_backbone_load_anomaly(
+    field: str, monkeypatch: object
+) -> None:
+    loading_info = {
+        "missing_keys": set(),
+        "unexpected_keys": set(),
+        "mismatched_keys": set(),
+        "error_msgs": [],
+    }
+    loading_info[field] = {"layers.0.attention.q_proj.weight"}
+    monkeypatch.setattr(
+        ViTModel,
+        "from_pretrained",
+        lambda *_args, **_kwargs: (ViTModel(_tiny_vit_config()), loading_info),
+    )
+    monkeypatch.setattr(
+        m0.ViTForImageClassification,
+        "from_pretrained",
+        lambda *_args, **_kwargs: ViTForImageClassification(_tiny_vit_config()),
+    )
+
+    with pytest.raises(RuntimeError, match=field):
+        m0.build_model(_adamw_config())
