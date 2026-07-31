@@ -1,0 +1,40 @@
+{
+  "branches": {
+    "control": {
+      "clean_loss_excess_auc_128": 0.0,
+      "final_clean_loss_excess": 0.0,
+      "max_abs_clean_loss_excess": 0.0,
+      "recovery_half_life": 0
+    },
+    "full": {
+      "clean_loss_excess_auc_128": 0.1316722109913826,
+      "final_clean_loss_excess": -0.004338070750236511,
+      "max_abs_clean_loss_excess": 0.004401795566082001,
+      "recovery_half_life": 64
+    },
+    "parameter_only": {
+      "clean_loss_excess_auc_128": -0.12475453317165375,
+      "final_clean_loss_excess": -0.0059373751282691956,
+      "max_abs_clean_loss_excess": 0.0059373751282691956,
+      "recovery_half_life": null
+    },
+    "state_only": {
+      "clean_loss_excess_auc_128": 0.22751201689243317,
+      "final_clean_loss_excess": 0.0027718618512153625,
+      "max_abs_clean_loss_excess": 0.004478074610233307,
+      "recovery_half_life": 64
+    }
+  },
+  "bundle_id": "adamw-label_flip-seed0",
+  "peak_vram_gb": 3.1788530349731445,
+  "primary_endpoint": {
+    "clean_loss_excess_auc_128": 0.22751201689243317,
+    "final_clean_loss_excess": 0.0027718618512153625,
+    "max_abs_clean_loss_excess": 0.004478074610233307,
+    "recovery_half_life": 64
+  },
+  "status": "succeeded",
+  "test_loaded": false,
+  "train_steps": 1014,
+  "wall_clock_seconds": 454.246212720871
+}

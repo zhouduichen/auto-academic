@@ -1,0 +1,58 @@
+warmup step=50/500 loss=4.416484
+warmup step=100/500 loss=4.086846
+warmup step=150/500 loss=3.644023
+warmup step=200/500 loss=3.014696
+warmup step=250/500 loss=2.605839
+warmup step=300/500 loss=2.244565
+warmup step=350/500 loss=1.913971
+warmup step=400/500 loss=1.512111
+warmup step=450/500 loss=1.373543
+warmup step=500/500 loss=1.090914
+trajectory=control complete
+trajectory=parameter_only complete
+trajectory=state_only complete
+trajectory=full complete
+{
+  "branches": {
+    "control": {
+      "clean_loss_excess_auc_128": 0.0,
+      "final_clean_loss_excess": 0.0,
+      "max_abs_clean_loss_excess": 0.0,
+      "recovery_half_life": 0
+    },
+    "full": {
+      "clean_loss_excess_auc_128": 0.1316722109913826,
+      "final_clean_loss_excess": -0.004338070750236511,
+      "max_abs_clean_loss_excess": 0.004401795566082001,
+      "recovery_half_life": 64
+    },
+    "parameter_only": {
+      "clean_loss_excess_auc_128": -0.12475453317165375,
+      "final_clean_loss_excess": -0.0059373751282691956,
+      "max_abs_clean_loss_excess": 0.0059373751282691956,
+      "recovery_half_life": null
+    },
+    "state_only": {
+      "clean_loss_excess_auc_128": 0.22751201689243317,
+      "final_clean_loss_excess": 0.0027718618512153625,
+      "max_abs_clean_loss_excess": 0.004478074610233307,
+      "recovery_half_life": 64
+    }
+  },
+  "bundle_id": "adamw-label_flip-seed0",
+  "peak_vram_gb": 3.1788530349731445,
+  "primary_endpoint": {
+    "clean_loss_excess_auc_128": 0.22751201689243317,
+    "final_clean_loss_excess": 0.0027718618512153625,
+    "max_abs_clean_loss_excess": 0.004478074610233307,
+    "recovery_half_life": 64
+  },
+  "status": "succeeded",
+  "test_loaded": false,
+  "train_steps": 1014,
+  "wall_clock_seconds": 454.246212720871
+}
+
+[stderr]
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/200 [00:00<?, ?it/s]Loading weights: 100%|██████████| 200/200 [00:00<00:00, 11673.54it/s]

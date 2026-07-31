@@ -1,0 +1,11 @@
+{
+  "clean_candidate_sha256": "cfc2c55eaa698513c4f65b5e6ac1db6ab475617989e325d4e4ac283afe7f8db1",
+  "clean_gradient_norm": 2.440855026245117,
+  "corrupt_candidate_sha256": "af7ff418a5bdade97ebf9b23b6d5e712f59e18f5a43d792e488daca0585bcca8",
+  "corrupt_gradient_norm_after_matching": 2.440855026245117,
+  "norm_ratio": 1.0,
+  "post_candidate_rng_sha256": "dde21b07f63be475248a516d9ab2ea806b2e35716dcfaf7364bb0248eb0b3608",
+  "pre_candidate_rng_sha256": "dde21b07f63be475248a516d9ab2ea806b2e35716dcfaf7364bb0248eb0b3608",
+  "pre_optimizer_sha256": "3475da23967990c4aa7449c8653af4c41df8fbc7c2dc776192338797df9cc97d",
+  "pre_parameters_sha256": "3d8ee6debf1c3fe1fc82946e9de75b9935d4bd7fa0fbf88db47a4d76e6e7a88e"
+}

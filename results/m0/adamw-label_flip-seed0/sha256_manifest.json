@@ -1,0 +1,32 @@
+[
+  {
+    "byte_size": 720,
+    "filename": "checkpoint_manifest.json",
+    "sha256": "d6ad615e71f463db8df9098e6f3d48b48f3a69ddbbff2daf4fc4201a300b4d19"
+  },
+  {
+    "byte_size": 1201248,
+    "filename": "replay_manifest.json",
+    "sha256": "cc83716ae2e51904b8b9c00811e2f598aede38147507a2c394fc11ac1f50464e"
+  },
+  {
+    "byte_size": 358,
+    "filename": "run_config.json",
+    "sha256": "7d39f45cabba19b6b4793d398ac05739fcb1430b07f4251978dfcb62802b50d1"
+  },
+  {
+    "byte_size": 592007,
+    "filename": "split_ids.json",
+    "sha256": "a56df3b7b225f69639525447f88624f707fd5c83b964c549df45a69d88591108"
+  },
+  {
+    "byte_size": 1332,
+    "filename": "summary.json",
+    "sha256": "033fb4d9103ed14e857c0c25963c2da9db0bb7c1be91ab2d4ffaab5eb4e8445c"
+  },
+  {
+    "byte_size": 8387,
+    "filename": "trajectory_metrics.jsonl",
+    "sha256": "dad724a24e6fbc1ca49b86d0e5c47cabd2ceb4f316beb27906884054ea81bfd8"
+  }
+]
