@@ -52,13 +52,17 @@ foreach ($seed in @(101, 102)) {
             continue
         }
     }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $Python -m experiments.m1_calibration_clean `
         --seed ([string]$seed) `
         --data-dir $DataDir `
         --output-dir $outputDir `
         --device cuda 2>&1 | Tee-Object -FilePath (Join-Path $outputDir "stdout.log") -Append
-    if ($LASTEXITCODE -ne 0) {
-        throw "clean calibration failed: seed=$seed exit=$LASTEXITCODE"
+    $runnerExit = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($runnerExit -ne 0) {
+        throw "clean calibration failed: seed=$seed exit=$runnerExit"
     }
 }
 
