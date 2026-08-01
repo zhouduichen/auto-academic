@@ -28,7 +28,7 @@
 | M0 四轨迹 | `tmp/m0-full-matrix-20260731.zip` | label-flip 的 AdamW state-only AUC 三个 seed 均为正，均值约 `0.6543`；SGD state-only 为 `0` | input degradation 的效应稳定性 | `VERIFIED_LOCAL` |
 | M0.5 载体归因 | `tmp/m05-full-20260731.zip` | `m-only` AUC 三个 seed 均为正 | Protect-M 或 Protect-MV 的结构选择；leave-one-seed-out 结论不稳定 | `INCONCLUSIVE_STRUCTURE` |
 | M0.6 独立确认 | Windows 原始包尚未绑定到本计划 | 后续文档记录为正式 PASS | 在本地原始包、哈希和独立重算完成前，不作为新 GPU 矩阵的唯一授权 | `REPORTED_NEEDS_BINDING` |
-| M1 clean calibration | Windows；源码起点 `fefb50f` | 已实现的最小 runner 本地测试 `3 passed` | 完成时间、预算 epoch 或正式实验性能 | `RESULT_NOT_IMPORTED` |
+| M1 calibration | Windows；clean 源码起点 `fefb50f`，noisy 源码 `1e566ba` | clean 已运行，noisy 当前正在运行；相关本地测试 `5 passed`、Ruff 通过 | 四个 cells 未入库前，不固定 Pilot 预算或宣称性能 | `NOISY_RUNNING` |
 
 当前只有两个科学结论可以固定：
 
@@ -45,11 +45,12 @@
 
 1. 从 Windows 收回 M0.6 bridge、20 个 evidence bundles 和 `COMPLETE.json`；核对 source commit、文件哈希、`test_loaded=false`、完整运行数和失败/重试记录。
 2. 按冻结规则独立重算 M0.6 的 `M`、`A_both`、95% 区间、符号一致性和 pulse 异质性；记录 `PASS` 或 `FAIL`，不改阈值。
-3. 收回已启动的 clean calibration seeds `101/102`；核对 source commit、split、步数、有限值、恢复记录、时间和显存。不因结果不理想重跑。
+3. 收回 clean calibration seeds `101/102` 和正在运行的 noisy calibration seeds `101/102`；核对 source commit、split、noise/input binding、步数、有限值、恢复记录、时间和显存。不干预当前运行，不因结果不理想重跑。
+4. 对 noisy cells 从私有 audit/source 重生成并比对标签哈希，独立确认 `train 101 -> noise 1101`、`train 102 -> noise 1102`；同时确认完成目录不是由其他 commit、config 或 bundle 复用而来。
 
-**通过门**：M0.6 原始包完整且独立重算通过；clean calibration seeds `101/102` 均形成完整、可审计的有效产物，足以冻结 Pilot 公共训练预算。
+**通过门**：M0.6 原始包完整且独立重算通过；clean/noisy 各两个 calibration cells 均形成完整、可审计的有效产物，足以冻结 Pilot 公共训练预算。
 
-**失败处理**：M0.6 科学门失败则停止 optimizer-admission 方法线；产物不完整则先恢复证据，不用新运行替换旧运行。clean calibration 的已验证系统故障只允许一次完全同配置重试；重试仍失败则 E0 为 `INCONCLUSIVE`，不启动 Pilot。
+**失败处理**：M0.6 科学门失败则停止 optimizer-admission 方法线；产物不完整则先恢复证据，不用新运行替换旧运行。calibration 的已验证系统故障只允许一次完全同配置重试；重试仍失败则 E0 为 `INCONCLUSIVE`，不启动 Pilot。
 
 ### M1-P0：最小实现门
 
@@ -57,7 +58,7 @@
 
 必做：
 
-1. 从现有 Protect-M/Protect-MV 草案中冻结一个共享 detector 和一个预先声明的默认配置；Pilot 不做 detector grid search。
+1. 从现有 Protect-M/Protect-MV 草案中冻结一个共享 detector 和一个预先声明的默认配置；Pilot 不做 detector grid search。精度直接继承已运行 calibration 的 FP32/AMP-disabled 路径，不新增 AMP 设计任务。
 2. 两个候选只允许“拒绝步是否保护 `v`”一处差异；关闭保护时必须与 AdamW 一致。
 3. 使用现有 `m1_noisy_data.py` 路线生成严格 40% instance-dependent noise；只增加 Pilot 冻结 noise seeds `1301–1303` 的入口，并补充一个最小检查，覆盖确定性、每类 160 个错标、公开/私有字段隔离和篡改拒绝。
 4. 审核 CAdam 的原论文公式、官方代码/许可证和 ViT-LoRA 兼容性。CAdam 作为当前最近的机制基线，不用新建基线平台。
@@ -81,7 +82,7 @@
 | 总数 | `4 methods × 2 conditions × 3 paired seeds = 24 runs` |
 | 数据门 | tuning validation 用于 epoch 曲线；development gate 只在全部方法/配置冻结后打开；official test 始终封闭 |
 
-公共训练预算由已完成的 clean calibration 产生，并对所有方法固定相同 optimizer steps、data accesses、evaluation cadence 和批次/增强 manifest。Pilot 不做 best-checkpoint 报告和中途停止。
+公共训练预算由 clean/noisy 四个 calibration cells 共同产生。对每个条件，先按 epoch 计算两个 seeds 的 tuning accuracy 算术均值 `a_e` 和全程最大值 `a_max`；选择最早的 epoch `e`，使 `a_e >= 0.99 * a_max`，且 `e..e+5` 六次评估均满足 `a_j >= a_max - 0.002`。若不存在该 epoch，该条件取 `50`。最终预算为 clean/noisy 两个 epoch 的较大值，限制在 `[20, 50]` 并转为精确 optimizer-step 数。对所有方法固定相同 optimizer steps、data accesses、evaluation cadence 和批次/增强 manifest。Pilot 不做 best-checkpoint 报告和中途停止。
 
 候选 `c` 相对 CAdam 的主要开发量为：
 
@@ -154,7 +155,7 @@ ARIS 的 W2/W3、paper pipeline、research wiki、全量 skill 控制层和通�
 ## 6. 当前顺序与总预算
 
 ```text
-收回/审计 M0.6 和 clean calibration
+收回/审计 M0.6 和 clean/noisy calibration
   -> 冻结最小候选与噪声链路
   -> CPU 检查 + GPU sentinel
   -> 24-run M1-Pilot
@@ -162,7 +163,7 @@ ARIS 的 W2/W3、paper pipeline、research wiki、全量 skill 控制层和通�
   -> 仅 PILOT-GO 后计划 8–12 seed 正式确认
 ```
 
-- E0：不新增科学 GPU 运行；只收回已有结果。
+- E0：不新增科学 GPU 运行；只等待当前 noisy calibration 完成并收回已有结果。
 - M1-P0：一个短 GPU sentinel，其余为 CPU/本地审计。
 - M1-Pilot：严格上限 24 runs，Windows 单并发。
 - M1-Confirm：当前不占用预算；将来上限 12 paired seeds，超出则停止。

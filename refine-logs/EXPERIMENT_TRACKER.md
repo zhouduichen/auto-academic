@@ -2,16 +2,17 @@
 
 > 只记录执行状态；实验理由、门槛与停止规则以 `EXPERIMENT_PLAN.md` 为准。
 >
-> 当前门：E0 证据封存。
+> 当前门：E0 证据封存；Windows 正在运行 noisy calibration。
 
 | ID | 任务 | 状态 | 完成/启动条件 | 备注 |
 |---|---|---|---|---|
 | E0-01 | 核对本地 M0/M0.5 原始包 | DONE | 本地 zip 可读，summary 与已记录结论一致 | M0 label-flip AdamW state-only 均值 AUC 约 0.6543；M0.5 结构归因不确定 |
 | E0-02 | 收回 M0.6 bridge + 20 bundles | TODO | Windows 原始产物、`COMPLETE.json` 和哈希可用 | 当前只有文档中的 formal PASS 记录 |
 | E0-03 | 独立重算 M0.6 冻结门 | BLOCKED | E0-02 完成 | 不修改阈值、不补 seed |
-| E0-04 | 收回 clean calibration `101/102` | VERIFY | Windows 运行状态和产物可读 | 本地 runner 测试 3/3 通过；正式结果未入库 |
-| E0-05 | 审计 clean calibration 与冻结 Pilot 预算 | BLOCKED | E0-04 产物完整 | 只使用 final/epoch 轨迹，不报 best checkpoint |
-| P0-01 | 冻结单一 detector 配置和公共 AMP 规则 | BLOCKED | E0 通过 | 不做 detector grid search |
+| E0-04 | 收回 clean calibration `101/102` | VERIFY | Windows 产物可读 | 用户确认当前已进入 noisy 阶段；clean 原始结果未入库 |
+| E0-05 | 等待并收回 noisy calibration `101/102` | RUNNING | Windows `NOISY_COMPLETE.json` 和两个 cells 可读 | 源码 `1e566ba`；预期配对 noise `1101/1102` |
+| E0-06 | 审计四个 calibration cells 与冻结 Pilot 预算 | BLOCKED | E0-04/E0-05 产物完整 | 复核 bundle 配对与目录谱系；不报 best checkpoint |
+| P0-01 | 冻结单一 detector 配置 | BLOCKED | E0 通过 | 不做 detector grid search；继承 calibration 的 FP32/AMP-disabled 路径 |
 | P0-02 | 完成 Protect-M/Protect-MV 最小实现与 CPU 检查 | BLOCKED | P0-01 冻结 | 关闭保护时与 AdamW 一致 |
 | P0-03 | 补齐 `m1_noisy_data.py` 的 Pilot seeds 与最小证据检查 | BLOCKED | E0 通过 | 仅增 `1301–1303`；检查确定性、精确 40%、私有字段隔离、篡改拒绝 |
 | P0-04 | CAdam 原论文/官方代码/许可证/兼容性审计 | BLOCKED | E0 通过 | 只审计一个最近机制基线 |
