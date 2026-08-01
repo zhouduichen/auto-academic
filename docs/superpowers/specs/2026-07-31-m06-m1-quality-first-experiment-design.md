@@ -250,7 +250,14 @@ Protect-M and Protect-MV are working experimental labels, not proposed paper nam
 
 ## 7. M1 Budget Calibration
 
-Calibration uses tuned-default AdamW only and is excluded from method comparisons:
+Calibration uses a preregistered AdamW anchor and is excluded from method comparisons. The anchor
+is independent of every M1 tuning result: `lr=3e-4`, `weight_decay=0.01`,
+`betas=(0.9,0.999)`, `eps=1e-8`, and `amsgrad=false`. All remaining model, LoRA, batch,
+augmentation, AMP, scheduler, and parameter-group rules are the common M1 rules.
+
+The binding order is: freeze split/noise/anchor/grid specs; run anchor calibration; freeze the exact
+optimizer-step budget and `G_ref`; tune AdamW under that budget; freeze AdamW; resolve the other
+method grids; tune the other methods. Calibration is not repeated after AdamW selection.
 
 | Condition | Train seeds | Noise seeds | Maximum budget |
 |---|---|---|---:|
@@ -309,7 +316,8 @@ optimizer-step/data-access budget and by 105% of the corresponding AdamW tuning
 wall-clock. Protect-M and Protect-MV use identical candidate grids. A selected
 configuration applies unchanged to clean and noisy runs.
 
-AdamW is tuned first and supplies the clean reference. At each rung, configurations for
+After anchor calibration has frozen the common optimizer-step budget, AdamW is the first method
+tuned and supplies the inherited public optimizer configuration and the clean reference. At each rung, configurations for
 another method are ranked lexicographically:
 
 1. clean tuning accuracy no more than 0.5 percentage points below AdamW at that rung;
