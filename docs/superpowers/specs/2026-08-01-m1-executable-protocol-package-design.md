@@ -490,6 +490,8 @@ m1-noise-audit-<opaque-id>/
   q_base_used.npy
   inclusion_probability.npy
   transition_probabilities.npy
+  channel_mean.npy
+  channel_std.npy
   private_manifest.json
 ```
 
@@ -503,6 +505,7 @@ m1-noise-audit-<opaque-id>/
 - sample count；
 - `sample_ids.npy`、`noisy_labels.npy` 的相对文件名、dtype、shape、SHA-256；
 - source protocol public ID；
+- train-split、feature-transform 和 generator digest；
 - public-manifest payload hash。
 
 它不含 clean labels、corruption mask、noise rate、noise seed、`q_i`、`pi_i` 或 transition。
@@ -540,7 +543,9 @@ CIFAR metadata；它是接口/能力隔离，不是安全沙箱。
 
 ### 10.2 方差规划
 
-对 8 个 paired pp differences：
+输入必须分别包含同一组 8 个 seed 上的 noisy superiority paired differences 和 clean
+non-inferiority paired differences。两组差值分别计算方差，不得用 noisy 方差替代 clean 方差，
+也不得反向替代。对任一组 paired pp differences：
 
 ```text
 s_M1 = sample standard deviation, ddof=1
@@ -558,10 +563,12 @@ new_dataset_or_backbone
 
 ```text
 same_domain:
-  sigma_plan = max(0.25 pp, sigma_U80)
+  sigma_plan_noisy = max(0.25 pp, sigma_U80_noisy)
+  sigma_plan_clean = max(0.25 pp, sigma_U80_clean)
 
 new_dataset_or_backbone:
-  sigma_plan = max(0.25 pp, 1.25 * sigma_U80)
+  sigma_plan_noisy = max(0.25 pp, 1.25 * sigma_U80_noisy)
+  sigma_plan_clean = max(0.25 pp, 1.25 * sigma_U80_clean)
 ```
 
 dataset 与 backbone 同时变化也只应用一次 1.25，不把两个 boolean 连乘。若 M1 没有语义匹配
