@@ -24,16 +24,16 @@ if (-not (Test-Path -LiteralPath $DataDir -PathType Container)) {
     throw "data directory is unavailable: $DataDir"
 }
 
-powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX 70 | Out-Null
+powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX 100 | Out-Null
 powercfg /SETACTIVE SCHEME_CURRENT | Out-Null
-nvidia-smi -lgc 300,1500 | Out-Null
+nvidia-smi -rgc | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "GPU clock lock failed"
+    throw "GPU clock reset failed"
 }
 
 $process = [System.Diagnostics.Process]::GetCurrentProcess()
-$process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-$process.ProcessorAffinity = [IntPtr]0x3FF
+$process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Normal
+$process.ProcessorAffinity = [IntPtr]0xFFF
 New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
 
 & $Python -c "import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.cuda.get_device_name(0))"
