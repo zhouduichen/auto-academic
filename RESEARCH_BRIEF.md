@@ -2,7 +2,7 @@
 
 > 输入对象：ARIS `/idea-discovery`
 >
-> 当前阶段：E0 证据封存；M1 noisy calibration 正在 Windows 运行，待收回并审计 M0.6 与 clean/noisy calibration，不启动其他科学矩阵
+> 当前阶段：E0 证据封存；M1 clean/noisy calibration 均已报告完成，待收回并审计 M0.6 与四个 calibration cells，不启动其他科学矩阵
 >
 > 成果门槛：CCF-A Full/Regular 或学校正式认定 T1
 >

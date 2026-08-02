@@ -2,7 +2,7 @@
 
 > 状态：当前唯一权威执行计划
 >
-> 更新：2026-08-01
+> 更新：2026-08-02
 >
 > 当前门：E0 证据封存
 >
@@ -28,7 +28,7 @@
 | M0 四轨迹 | `tmp/m0-full-matrix-20260731.zip` | label-flip 的 AdamW state-only AUC 三个 seed 均为正，均值约 `0.6543`；SGD state-only 为 `0` | input degradation 的效应稳定性 | `VERIFIED_LOCAL` |
 | M0.5 载体归因 | `tmp/m05-full-20260731.zip` | `m-only` AUC 三个 seed 均为正 | Protect-M 或 Protect-MV 的结构选择；leave-one-seed-out 结论不稳定 | `INCONCLUSIVE_STRUCTURE` |
 | M0.6 独立确认 | Windows 原始包尚未绑定到本计划 | 后续文档记录为正式 PASS | 在本地原始包、哈希和独立重算完成前，不作为新 GPU 矩阵的唯一授权 | `REPORTED_NEEDS_BINDING` |
-| M1 calibration | Windows；clean 源码起点 `fefb50f`，noisy 源码 `1e566ba` | clean 已运行，noisy 当前正在运行；相关本地测试 `5 passed`、Ruff 通过 | 四个 cells 未入库前，不固定 Pilot 预算或宣称性能 | `NOISY_RUNNING` |
+| M1 calibration | Windows；clean 源码起点 `fefb50f`，noisy 源码 `1e566ba` | clean/noisy 均已报告完成；相关本地测试 `5 passed`、Ruff 通过 | 四个 cells 未入库审计前，不固定 Pilot 预算或宣称性能 | `REPORTED_NEEDS_IMPORT` |
 
 当前只有两个科学结论可以固定：
 
@@ -45,7 +45,7 @@
 
 1. 从 Windows 收回 M0.6 bridge、20 个 evidence bundles 和 `COMPLETE.json`；核对 source commit、文件哈希、`test_loaded=false`、完整运行数和失败/重试记录。
 2. 按冻结规则独立重算 M0.6 的 `M`、`A_both`、95% 区间、符号一致性和 pulse 异质性；记录 `PASS` 或 `FAIL`，不改阈值。
-3. 收回 clean calibration seeds `101/102` 和正在运行的 noisy calibration seeds `101/102`；核对 source commit、split、noise/input binding、步数、有限值、恢复记录、时间和显存。不干预当前运行，不因结果不理想重跑。
+3. 收回已报告完成的 clean/noisy calibration seeds `101/102`；核对 source commit、split、noise/input binding、步数、有限值、恢复记录、时间和显存。不因结果不理想重跑。
 4. 对 noisy cells 从私有 audit/source 重生成并比对标签哈希，独立确认 `train 101 -> noise 1101`、`train 102 -> noise 1102`；同时确认完成目录不是由其他 commit、config 或 bundle 复用而来。
 
 **通过门**：M0.6 原始包完整且独立重算通过；clean/noisy 各两个 calibration cells 均形成完整、可审计的有效产物，足以冻结 Pilot 公共训练预算。
@@ -163,7 +163,7 @@ ARIS 的 W2/W3、paper pipeline、research wiki、全量 skill 控制层和通�
   -> 仅 PILOT-GO 后计划 8–12 seed 正式确认
 ```
 
-- E0：不新增科学 GPU 运行；只等待当前 noisy calibration 完成并收回已有结果。
+- E0：不新增科学 GPU 运行；只收回并审计已有结果。
 - M1-P0：一个短 GPU sentinel，其余为 CPU/本地审计。
 - M1-Pilot：严格上限 24 runs，Windows 单并发。
 - M1-Confirm：当前不占用预算；将来上限 12 paired seeds，超出则停止。
