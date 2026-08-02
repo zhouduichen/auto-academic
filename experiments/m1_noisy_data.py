@@ -351,7 +351,9 @@ def main() -> None:
     generate.add_argument("--source", type=Path, required=True)
     generate.add_argument("--training", type=Path, required=True)
     generate.add_argument("--audit", type=Path, required=True)
-    generate.add_argument("--noise-seed", type=int, choices=(1101, 1102), required=True)
+    generate.add_argument(
+        "--noise-seed", type=int, choices=(1101, 1102, 1201, 1202), required=True
+    )
     generate.add_argument("--opaque-id", required=True)
     validate = commands.add_parser("validate")
     validate.add_argument("--training", type=Path, required=True)

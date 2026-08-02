@@ -355,21 +355,28 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
 
 def parse_args() -> tuple[Config, Path, Path]:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, choices=(101, 102), required=True)
+    parser.add_argument("--seed", type=int, choices=(101, 102, 201, 202), required=True)
     parser.add_argument("--data-dir", type=Path, default=Path("./data/cifar100"))
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--augmentation-seed", type=int)
     args = parser.parse_args()
     if not 1 <= args.epochs <= 50:
         parser.error("epochs must be in [1, 50]")
     config = Config(
         seed=args.seed,
-        augmentation_seed=10_000 + args.seed,
+        augmentation_seed=(
+            args.augmentation_seed if args.augmentation_seed is not None else 10_000 + args.seed
+        ),
         epochs=args.epochs,
         workers=args.workers,
         device=args.device,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
     )
     return config, args.data_dir, args.output_dir
 

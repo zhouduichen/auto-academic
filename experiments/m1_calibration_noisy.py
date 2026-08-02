@@ -217,20 +217,27 @@ def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, choices=(101, 102), required=True)
+    parser.add_argument("--seed", type=int, choices=(101, 102, 201, 202), required=True)
     parser.add_argument("--training", type=Path, required=True)
     parser.add_argument("--image-store", type=Path, required=True)
     parser.add_argument("--tuning-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--augmentation-seed", type=int)
     args = parser.parse_args()
     config = clean.Config(
         seed=args.seed,
-        augmentation_seed=10_000 + args.seed,
+        augmentation_seed=(
+            args.augmentation_seed if args.augmentation_seed is not None else 10_000 + args.seed
+        ),
         epochs=args.epochs,
         workers=args.workers,
         device="cuda",
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
     )
     print(
         json.dumps(
