@@ -31,6 +31,13 @@ def test_optimizer_keeps_bias_out_of_weight_decay() -> None:
     assert [group["weight_decay"] for group in optimizer.param_groups] == [0.01, 0.0]
 
 
+def test_optimizer_uses_retuned_betas() -> None:
+    model = torch.nn.Sequential(torch.nn.Linear(2, 3))
+    config = m1.Config(seed=101, augmentation_seed=10_101, betas=(0.7, 0.95))
+    optimizer = m1._build_optimizer(model, config)
+    assert all(group["betas"] == (0.7, 0.95) for group in optimizer.param_groups)
+
+
 def test_small_run_only_constructs_training_dataset(tmp_path: object, monkeypatch: object) -> None:
     calls: list[dict[str, object]] = []
 

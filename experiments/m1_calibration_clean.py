@@ -37,6 +37,7 @@ class Config:
     weight_decay: float = 0.01
     betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
+    max_grad_norm: float | None = None
     model_id: str = "google/vit-base-patch16-224-in21k"
     lora_rank: int = 8
     workers: int = 4
@@ -276,8 +277,7 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
             raise RuntimeError("checkpoint is ahead of gradient metrics")
         gradient_path.write_text(
             "".join(
-                json.dumps(row, separators=(",", ":")) + "\n"
-                for row in rows[:completed_steps]
+                json.dumps(row, separators=(",", ":")) + "\n" for row in rows[:completed_steps]
             ),
             encoding="utf-8",
         )
@@ -307,6 +307,8 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
             loss = criterion(m0.forward_logits(model, images), labels)
             loss.backward()
             norm = _global_gradient_norm(model)
+            if config.max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
             optimizer_steps += 1
             epoch_norms.append(norm)
@@ -363,6 +365,9 @@ def parse_args() -> tuple[Config, Path, Path]:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--beta1", type=float, default=0.9)
+    parser.add_argument("--beta2", type=float, default=0.999)
+    parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
     args = parser.parse_args()
     if not 1 <= args.epochs <= 50:
@@ -377,6 +382,8 @@ def parse_args() -> tuple[Config, Path, Path]:
         device=args.device,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
+        betas=(args.beta1, args.beta2),
+        max_grad_norm=args.max_grad_norm,
     )
     return config, args.data_dir, args.output_dir
 

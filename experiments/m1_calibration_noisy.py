@@ -56,9 +56,7 @@ class NoisyTrainDataset(Dataset[tuple[Tensor, int]]):
 class TuningDataset(Dataset[tuple[Tensor, int]]):
     def __init__(self, tuning_store: Path) -> None:
         self.images = np.load(tuning_store / "images.npy", mmap_mode="r", allow_pickle=False)
-        self.labels = np.load(
-            tuning_store / "clean_labels.npy", mmap_mode="r", allow_pickle=False
-        )
+        self.labels = np.load(tuning_store / "clean_labels.npy", mmap_mode="r", allow_pickle=False)
 
     def __len__(self) -> int:
         return len(self.labels)
@@ -129,8 +127,7 @@ def run(
         raise RuntimeError("checkpoint is ahead of epoch metrics")
     metrics_path.write_text(
         "".join(
-            json.dumps(row, separators=(",", ":")) + "\n"
-            for row in existing_metrics[:start_epoch]
+            json.dumps(row, separators=(",", ":")) + "\n" for row in existing_metrics[:start_epoch]
         ),
         encoding="utf-8",
     )
@@ -167,6 +164,8 @@ def run(
             loss = criterion(m0.forward_logits(model, images), labels)
             loss.backward()
             norm = clean._global_gradient_norm(model)
+            if config.max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
             optimizer_steps += 1
             norms.append(norm)
@@ -226,6 +225,9 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--beta1", type=float, default=0.9)
+    parser.add_argument("--beta2", type=float, default=0.999)
+    parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
     args = parser.parse_args()
     config = clean.Config(
@@ -238,6 +240,8 @@ def main() -> None:
         device="cuda",
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
+        betas=(args.beta1, args.beta2),
+        max_grad_norm=args.max_grad_norm,
     )
     print(
         json.dumps(
