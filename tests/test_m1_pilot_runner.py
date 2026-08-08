@@ -15,6 +15,7 @@ from experiments.m1_calibration_clean import (
 )
 from experiments.m1_noisy_data import PILOT_NOISE_SEEDS
 from experiments.m1_optimizers import CAdamW, ProtectAdamW
+from experiments.m1_pilot import build_matrix, evaluate_candidate, validate_sentinel
 
 
 class TinyModel(nn.Module):
@@ -66,3 +67,59 @@ def test_optimizer_diagnostics_are_jsonl(tmp_path: Path) -> None:
         "alignment_ratio": 0.75,
         "step": 7,
     }
+
+
+def test_matrix_is_exactly_24_cells() -> None:
+    matrix = build_matrix()
+    assert len(matrix) == 24
+    assert {(cell.method, cell.condition, cell.seed) for cell in matrix} == {
+        (method, condition, seed)
+        for method in PILOT_METHODS
+        for condition in ("clean", "noisy")
+        for seed in (301, 302, 303)
+    }
+
+
+def _candidate_rows(noisy_deltas: tuple[float, float, float]) -> dict[str, object]:
+    return {
+        "candidate": "protect-m",
+        "noisy_differences_pp": list(noisy_deltas),
+        "clean_differences_pp": [-0.1, -0.2, 0.0],
+        "fixed_wallclock_noisy_differences_pp": [0.8, 0.9, 1.0],
+        "wallclock_ratios": [1.01] * 6,
+        "vram_ratios": [1.0] * 6,
+    }
+
+
+def test_candidate_gate_requires_three_positive_one_point_mean() -> None:
+    assert evaluate_candidate(_candidate_rows((1.1, 1.2, 1.0)))["eligible"] is True
+    assert evaluate_candidate(_candidate_rows((1.5, 1.5, 0.0)))["eligible"] is False
+    assert evaluate_candidate(_candidate_rows((0.8, 0.9, 1.0)))["eligible"] is False
+
+
+def test_candidate_gate_enforces_clean_and_efficiency() -> None:
+    clean_failure = _candidate_rows((1.1, 1.2, 1.0))
+    clean_failure["clean_differences_pp"] = [-1.1, 0.0, 0.0]
+    assert evaluate_candidate(clean_failure)["eligible"] is False
+    timing_failure = _candidate_rows((1.1, 1.2, 1.0))
+    timing_failure["wallclock_ratios"] = [1.06] * 6
+    assert evaluate_candidate(timing_failure)["eligible"] is False
+
+
+def test_dispatch_requires_matching_passed_sentinel(tmp_path: Path) -> None:
+    path = tmp_path / "sentinel.json"
+    with pytest.raises(RuntimeError, match="sentinel"):
+        validate_sentinel(path, source_commit="a" * 40)
+    path.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "source_commit": "b" * 40,
+                "test_loaded": False,
+                "candidate_ratios": {"protect-m": 1.01, "protect-mv": 1.02},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="source"):
+        validate_sentinel(path, source_commit="a" * 40)
