@@ -568,14 +568,14 @@ class ProtectAdamW(Optimizer):
         if not bool(finite):
             raise FloatingPointError("non-finite gradient")
         dot = torch.zeros((), dtype=torch.float32, device=device)
-        gg = torch.zeros((), dtype=torch.float32, device=device)
-        rr = torch.zeros((), dtype=torch.float32, device=device)
+        references: list[Tensor] = []
         for group, _parameter, gradient, exp_avg, _exp_avg_sq, step in active:
             beta1 = float(group["betas"][0])
             reference = torch.zeros_like(exp_avg) if step == 0 else exp_avg / (1 - beta1**step)
+            references.append(reference)
             dot = dot + torch.sum(gradient * reference, dtype=torch.float32)
-            gg = gg + torch.sum(gradient * gradient, dtype=torch.float32)
-            rr = rr + torch.sum(reference * reference, dtype=torch.float32)
+        gg = torch.stack(torch._foreach_norm(gradients, ord=2)).square().sum()
+        rr = torch.stack(torch._foreach_norm(references, ord=2)).square().sum()
         one = torch.ones((), dtype=torch.float32, device=device)
         zero = torch.zeros((), dtype=torch.float32, device=device)
         denominator = torch.sqrt(gg * rr)
