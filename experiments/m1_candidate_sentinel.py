@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import os
 import statistics
@@ -50,34 +49,6 @@ def _build(method: str, device: torch.device) -> tuple[nn.Module, torch.optim.Op
     return model, optimizer
 
 
-def _tensor_hash(digest: AnyHash, tensor: Tensor) -> None:
-    value = tensor.detach().cpu().contiguous()
-    digest.update(str(value.dtype).encode())
-    digest.update(str(tuple(value.shape)).encode())
-    digest.update(value.numpy().tobytes())
-
-
-class AnyHash:
-    def update(self, value: bytes) -> None: ...
-
-    def hexdigest(self) -> str: ...
-
-
-def _state_hash(model: nn.Module, optimizer: torch.optim.Optimizer) -> str:
-    digest = hashlib.sha256()
-    for name, parameter in model.named_parameters():
-        if not parameter.requires_grad:
-            continue
-        digest.update(name.encode())
-        _tensor_hash(digest, parameter)
-        state = optimizer.state.get(parameter, {})
-        for key in ("step", "exp_avg", "exp_avg_sq"):
-            if key in state:
-                digest.update(key.encode())
-                _tensor_hash(digest, state[key])
-    return digest.hexdigest()
-
-
 def _training_step(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -90,24 +61,64 @@ def _training_step(
     optimizer.step()
 
 
-def _parity_hashes(method: str, images: Tensor, labels: Tensor) -> list[str]:
-    model, optimizer = _build(method, images.device)
-    if isinstance(optimizer, ProtectAdamW):
+def _tensor_equal(left: object, right: object) -> bool:
+    if isinstance(left, Tensor) and isinstance(right, Tensor):
+        return torch.equal(left, right)
+    return left == right
+
+
+def _model_optimizer_equal(
+    left_model: nn.Module,
+    left_optimizer: torch.optim.Optimizer,
+    right_model: nn.Module,
+    right_optimizer: torch.optim.Optimizer,
+) -> bool:
+    left_parameters = list(left_model.named_parameters())
+    right_parameters = list(right_model.named_parameters())
+    if [name for name, _ in left_parameters] != [name for name, _ in right_parameters]:
+        return False
+    for (_, left_parameter), (_, right_parameter) in zip(
+        left_parameters, right_parameters, strict=True
+    ):
+        if not torch.equal(left_parameter, right_parameter):
+            return False
+        left_state = left_optimizer.state.get(left_parameter, {})
+        right_state = right_optimizer.state.get(right_parameter, {})
+        if set(left_state) != set(right_state):
+            return False
+        for key in left_state:
+            if not _tensor_equal(left_state[key], right_state[key]):
+                return False
+    return True
+
+
+def _parity_check(images: Tensor, labels: Tensor) -> bool:
+    reference_model, reference_optimizer = _build("adamw", images.device)
+    m_model, m_optimizer = _build("protect-m", images.device)
+    mv_model, mv_optimizer = _build("protect-mv", images.device)
+    for optimizer in (m_optimizer, mv_optimizer):
+        if not isinstance(optimizer, ProtectAdamW):
+            raise TypeError("candidate optimizer construction returned wrong type")
         optimizer.protection_enabled = False
-    hashes = []
+    parity = True
     for _ in range(5):
-        _training_step(model, optimizer, images, labels)
-        hashes.append(_state_hash(model, optimizer))
-    del optimizer, model
+        _training_step(reference_model, reference_optimizer, images, labels)
+        _training_step(m_model, m_optimizer, images, labels)
+        _training_step(mv_model, mv_optimizer, images, labels)
+        parity = parity and _model_optimizer_equal(
+            reference_model, reference_optimizer, m_model, m_optimizer
+        )
+        parity = parity and _model_optimizer_equal(
+            reference_model, reference_optimizer, mv_model, mv_optimizer
+        )
+    del reference_optimizer, reference_model, m_optimizer, m_model, mv_optimizer, mv_model
+    torch.cuda.synchronize(images.device)
     torch.cuda.empty_cache()
-    return hashes
+    return parity
 
 
 def _functional_checks(images: Tensor, labels: Tensor) -> dict[str, object]:
-    reference = _parity_hashes("adamw", images, labels)
-    m_hashes = _parity_hashes("protect-m", images, labels)
-    mv_hashes = _parity_hashes("protect-mv", images, labels)
-    parity = reference == m_hashes == mv_hashes
+    parity = _parity_check(images, labels)
 
     parameter = nn.Parameter(torch.tensor([1.0], device=images.device))
     optimizer = ProtectAdamW([parameter], protection_target="m")
