@@ -62,8 +62,7 @@ def _validate_parameter_and_gradient(parameter: Tensor, gradient: Tensor) -> Non
         raise RuntimeError("sparse gradients are unsupported")
     if gradient.shape != parameter.shape:
         raise ValueError("gradient shape differs from parameter shape")
-    if not bool(torch.isfinite(gradient).all()):
-        raise FloatingPointError("non-finite gradient")
+
 
 
 def _read_state(state: dict[str, Any], parameter: Tensor) -> tuple[Tensor, Tensor, int]:
@@ -154,6 +153,7 @@ class ProtectAdamW(Optimizer):
         self.good_streak = 0
         self.last_diagnostics: dict[str, object] = {}
         self._device_detector: dict[str, Tensor] | None = None
+        self._step_cache: dict[nn.Parameter, int] = {}
         self._diagnostic_counters: dict[str, Tensor] | None = None
         self._last_device_diagnostics: dict[str, Tensor] = {}
 
@@ -409,11 +409,15 @@ class ProtectAdamW(Optimizer):
         before_protect = self.protect_state_dict()
         try:
             super().load_state_dict(incoming)
+            self._step_cache.clear()
             for group in self.param_groups:
                 _validate_group(group)
                 for parameter in group["params"]:
                     if parameter in self.state:
-                        _read_state(self.state[parameter], parameter)
+                        _exp_avg, _exp_avg_sq, step = _read_state(
+                            self.state[parameter], parameter
+                        )
+                        self._step_cache[parameter] = step
             self.set_detector_state_for_test(
                 fast_ema=float(protect["fast_ema"]),
                 slow_ema=float(protect["slow_ema"]),
@@ -536,13 +540,29 @@ class ProtectAdamW(Optimizer):
                     device = parameter.device
                 elif parameter.device != device:
                     raise ValueError("all active parameters must use one device")
-                exp_avg, exp_avg_sq, step = _read_state(self.state[parameter], parameter)
+                state = self.state.get(parameter, {})
+                if not state:
+                    exp_avg = torch.zeros_like(parameter)
+                    exp_avg_sq = torch.zeros_like(parameter)
+                    step = 0
+                else:
+                    exp_avg = state["exp_avg"]
+                    exp_avg_sq = state["exp_avg_sq"]
+                    step = self._step_cache.get(parameter)
+                    if step is None:
+                        _exp_avg, _exp_avg_sq, step = _read_state(state, parameter)
+                        self._step_cache[parameter] = step
                 active.append((group, parameter, gradient, exp_avg, exp_avg_sq, step))
         if not active:
             self.last_diagnostics = {}
             return loss
         if device is None:
             raise RuntimeError("active parameter device was not resolved")
+        finite = torch.ones((), dtype=torch.bool, device=device)
+        for _group, _parameter, gradient, _exp_avg, _exp_avg_sq, _step in active:
+            finite = finite & torch.isfinite(gradient).all()
+        if not bool(finite):
+            raise FloatingPointError("non-finite gradient")
         dot = torch.zeros((), dtype=torch.float32, device=device)
         gg = torch.zeros((), dtype=torch.float32, device=device)
         rr = torch.zeros((), dtype=torch.float32, device=device)
@@ -560,7 +580,7 @@ class ProtectAdamW(Optimizer):
         score = torch.where(rr == 0, one, torch.where(gg == 0, zero, cosine))
         detector = self._next_detector_device(score)
         staged: list[
-            tuple[nn.Parameter, Tensor, Tensor, Tensor, Tensor, Tensor, int]
+            tuple[nn.Parameter, Tensor, Tensor, Tensor, Tensor, float, float, float, int]
         ] = []
         for group, parameter, gradient, exp_avg, exp_avg_sq, step in active:
             beta1, beta2 = (float(value) for value in group["betas"])
@@ -569,35 +589,38 @@ class ProtectAdamW(Optimizer):
             exp_avg_sq_candidate = exp_avg_sq.clone(memory_format=torch.preserve_format)
             exp_avg_candidate.lerp_(gradient, 1 - beta1)
             exp_avg_sq_candidate.mul_(beta2).addcmul_(gradient, gradient, value=1 - beta2)
-            parameter_candidate = parameter.clone(memory_format=torch.preserve_format)
-            parameter_candidate.mul_(1 - float(group["lr"]) * float(group["weight_decay"]))
             bias_correction1 = 1 - beta1**next_step
             bias_correction2 = 1 - beta2**next_step
-            step_size = float(group["lr"]) / bias_correction1
+            lr = float(group["lr"])
+            weight_decay = float(group["weight_decay"])
+            step_size = lr / bias_correction1
             denominator = exp_avg_sq_candidate.sqrt() / math.sqrt(bias_correction2)
             denominator.add_(float(group["eps"]))
-            parameter_candidate.addcdiv_(
-                exp_avg_candidate, denominator, value=-step_size
-            )
             staged.append(
                 (
                     parameter,
-                    parameter_candidate,
                     exp_avg,
                     exp_avg_sq,
                     exp_avg_candidate,
                     exp_avg_sq_candidate,
+                    denominator,
+                    lr,
+                    step_size,
+                    weight_decay,
                     next_step,
                 )
             )
         admitted = detector["admit"]
         for (
             parameter,
-            parameter_candidate,
             exp_avg,
             exp_avg_sq,
             exp_avg_candidate,
             exp_avg_sq_candidate,
+            denominator,
+            lr,
+            step_size,
+            weight_decay,
             step,
         ) in staged:
             state = self.state[parameter]
@@ -605,8 +628,10 @@ class ProtectAdamW(Optimizer):
                 state["step"] = torch.tensor(0.0, dtype=torch.float32)
                 state["exp_avg"] = torch.zeros_like(parameter)
                 state["exp_avg_sq"] = torch.zeros_like(parameter)
-            parameter.copy_(parameter_candidate)
+            parameter.mul_(1 - lr * weight_decay)
+            parameter.addcdiv_(exp_avg_candidate, denominator, value=-step_size)
             state["step"].fill_(float(step))
+            self._step_cache[parameter] = step
             if not self.protection_enabled:
                 state["exp_avg"].copy_(exp_avg_candidate)
                 state["exp_avg_sq"].copy_(exp_avg_sq_candidate)
