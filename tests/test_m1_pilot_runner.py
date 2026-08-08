@@ -11,6 +11,7 @@ from experiments.m1_calibration_clean import (
     PILOT_METHODS,
     Config,
     _build_optimizer,
+    _optimizer_epoch_diagnostic,
     _write_optimizer_diagnostic,
 )
 from experiments.m1_noisy_data import PILOT_NOISE_SEEDS
@@ -67,6 +68,20 @@ def test_optimizer_diagnostics_are_jsonl(tmp_path: Path) -> None:
         "alignment_ratio": 0.75,
         "step": 7,
     }
+
+
+def test_protect_diagnostics_are_deferred_to_epoch_boundary() -> None:
+    parameter = nn.Parameter(torch.tensor([1.0]))
+    optimizer = ProtectAdamW([parameter], protection_target="m")
+    for gradient in (0.2, -0.1, 0.3):
+        parameter.grad = torch.tensor([gradient])
+        optimizer.step()
+    row = _optimizer_epoch_diagnostic(optimizer, epoch=1, optimizer_steps=3)
+    assert row is not None
+    assert row["epoch"] == 1
+    assert row["optimizer_steps"] == 3
+    assert row["successful_steps"] == 3
+    assert optimizer.diagnostics_summary()["successful_steps"] == 0
 
 
 def test_matrix_is_exactly_24_cells() -> None:

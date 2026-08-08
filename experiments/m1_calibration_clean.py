@@ -188,6 +188,19 @@ def _write_optimizer_diagnostic(
         stream.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
 
 
+def _optimizer_epoch_diagnostic(
+    optimizer: torch.optim.Optimizer, epoch: int, optimizer_steps: int
+) -> dict[str, object] | None:
+    summary = getattr(optimizer, "diagnostics_summary", None)
+    if callable(summary):
+        value = summary(reset=True)
+    else:
+        value = getattr(optimizer, "last_diagnostics", None)
+    if not isinstance(value, dict) or not value:
+        return None
+    return {"epoch": epoch, "optimizer_steps": optimizer_steps, **value}
+
+
 def _global_gradient_norm(model: nn.Module) -> float:
     gradients = [
         parameter.grad.detach()
@@ -320,11 +333,10 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
         )
     if diagnostic_path.is_file():
         rows = diagnostic_path.read_text(encoding="utf-8").splitlines()
-        completed_steps = start_epoch * (len(split["train"]) // config.batch_size)
-        if len(rows) < completed_steps and config.method != "adamw":
+        if len(rows) < start_epoch and config.method != "adamw":
             raise RuntimeError("checkpoint is ahead of optimizer diagnostics")
         diagnostic_path.write_text(
-            "\n".join(rows[:completed_steps]) + ("\n" if completed_steps else ""),
+            "\n".join(rows[:start_epoch]) + ("\n" if start_epoch else ""),
             encoding="utf-8",
         )
     started = time.monotonic()
@@ -346,7 +358,6 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
         train_loss = 0.0
         seen = 0
         epoch_norms: list[float] = []
-        epoch_diagnostics: list[dict[str, object]] = []
         for images, labels in train_loader:
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
@@ -358,9 +369,6 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
             optimizer_steps += 1
-            diagnostic = _optimizer_diagnostic(optimizer, optimizer_steps)
-            if diagnostic is not None:
-                epoch_diagnostics.append(diagnostic)
             epoch_norms.append(norm)
             train_loss += float(loss.detach()) * len(labels)
             seen += len(labels)
@@ -381,12 +389,13 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
                 stream.write(payload + "\n")
         with metrics_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
-        if epoch_diagnostics:
+        epoch_diagnostic = _optimizer_epoch_diagnostic(optimizer, epoch + 1, optimizer_steps)
+        if epoch_diagnostic is not None:
             with diagnostic_path.open("a", encoding="utf-8") as stream:
-                for diagnostic in epoch_diagnostics:
-                    stream.write(
-                        json.dumps(diagnostic, separators=(",", ":"), allow_nan=False) + "\n"
-                    )
+                stream.write(
+                    json.dumps(epoch_diagnostic, separators=(",", ":"), allow_nan=False)
+                    + "\n"
+                )
         _checkpoint(checkpoint_path, model, optimizer, epoch + 1)
         print(json.dumps(row, sort_keys=True), flush=True)
 

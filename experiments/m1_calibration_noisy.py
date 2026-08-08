@@ -145,10 +145,10 @@ def run(
         if diagnostic_path.is_file()
         else []
     )
-    if len(existing_diagnostics) < completed_steps and config.method != "adamw":
+    if len(existing_diagnostics) < start_epoch and config.method != "adamw":
         raise RuntimeError("checkpoint is ahead of optimizer diagnostics")
     diagnostic_path.write_text(
-        "\n".join(existing_diagnostics[:completed_steps]) + ("\n" if completed_steps else ""),
+        "\n".join(existing_diagnostics[:start_epoch]) + ("\n" if start_epoch else ""),
         encoding="utf-8",
     )
     elapsed_offset = (
@@ -169,7 +169,6 @@ def run(
         model.train()
         train_loss, seen = 0.0, 0
         norms: list[float] = []
-        diagnostics: list[dict[str, object]] = []
         for images, labels in train_loader:
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
@@ -181,9 +180,6 @@ def run(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
             optimizer_steps += 1
-            diagnostic = clean._optimizer_diagnostic(optimizer, optimizer_steps)
-            if diagnostic is not None:
-                diagnostics.append(diagnostic)
             norms.append(norm)
             train_loss += float(loss.detach()) * len(labels)
             seen += len(labels)
@@ -204,12 +200,15 @@ def run(
                 stream.write(payload + "\n")
         with metrics_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
-        if diagnostics:
+        epoch_diagnostic = clean._optimizer_epoch_diagnostic(
+            optimizer, epoch + 1, optimizer_steps
+        )
+        if epoch_diagnostic is not None:
             with diagnostic_path.open("a", encoding="utf-8") as stream:
-                for diagnostic in diagnostics:
-                    stream.write(
-                        json.dumps(diagnostic, separators=(",", ":"), allow_nan=False) + "\n"
-                    )
+                stream.write(
+                    json.dumps(epoch_diagnostic, separators=(",", ":"), allow_nan=False)
+                    + "\n"
+                )
         clean._checkpoint(checkpoint_path, model, optimizer, epoch + 1)
         print(json.dumps(row, sort_keys=True), flush=True)
     peak = torch.cuda.max_memory_allocated(device) / 1024**3 if device.type == "cuda" else 0.0

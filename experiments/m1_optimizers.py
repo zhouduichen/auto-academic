@@ -153,6 +153,9 @@ class ProtectAdamW(Optimizer):
         self.bad_streak = 0
         self.good_streak = 0
         self.last_diagnostics: dict[str, object] = {}
+        self._device_detector: dict[str, Tensor] | None = None
+        self._diagnostic_counters: dict[str, Tensor] | None = None
+        self._last_device_diagnostics: dict[str, Tensor] = {}
 
     def _next_detector(self, score: float) -> dict[str, object]:
         if not math.isfinite(score) or not -1 <= score <= 1:
@@ -221,11 +224,96 @@ class ProtectAdamW(Optimizer):
         self.admit = bool(state["admit"])
         self.bad_streak = int(state["bad_streak"])
         self.good_streak = int(state["good_streak"])
+        self._device_detector = None
+
+    def _ensure_device_detector(self, device: torch.device) -> dict[str, Tensor]:
+        state = self._device_detector
+        if state is not None:
+            if state["fast_ema"].device != device:
+                raise ValueError("detector device changed")
+            return state
+        state = {
+            "fast_ema": torch.tensor(self.fast_ema, dtype=torch.float32, device=device),
+            "slow_ema": torch.tensor(self.slow_ema, dtype=torch.float32, device=device),
+            "admit": torch.tensor(self.admit, dtype=torch.bool, device=device),
+            "bad_streak": torch.tensor(bool(self.bad_streak), dtype=torch.bool, device=device),
+            "good_streak": torch.tensor(
+                bool(self.good_streak), dtype=torch.bool, device=device
+            ),
+        }
+        self._device_detector = state
+        return state
+
+    def _next_detector_device(self, score: Tensor) -> dict[str, Tensor]:
+        if score.dtype != torch.float32 or score.numel() != 1:
+            raise TypeError("detector score must be a scalar FP32 tensor")
+        state = self._ensure_device_detector(score.device)
+        fast = state["fast_ema"] * self.alpha_fast + score * (1 - self.alpha_fast)
+        slow = state["slow_ema"] * self.alpha_slow + score * (1 - self.alpha_slow)
+        difference = fast - slow
+        admit = state["admit"]
+        bad = state["bad_streak"]
+        good = state["good_streak"]
+        below = difference <= -self.tau
+        above = difference >= self.tau
+        turn_off = admit & below & bad
+        turn_on = (~admit) & above & good
+        return {
+            "fast_ema": fast,
+            "slow_ema": slow,
+            "d": difference,
+            "admit": torch.where(admit, ~turn_off, turn_on),
+            "bad_streak": admit & below & (~bad),
+            "good_streak": (~admit) & above & (~good),
+            "transition_off": turn_off,
+            "transition_on": turn_on,
+        }
+
+    def _commit_device_detector(self, state: dict[str, Tensor]) -> None:
+        self._device_detector = {
+            key: state[key]
+            for key in ("fast_ema", "slow_ema", "admit", "bad_streak", "good_streak")
+        }
+
+    def _sync_detector_to_host(self) -> None:
+        state = self._device_detector
+        if state is None:
+            return
+        self.fast_ema = float(state["fast_ema"].item())
+        self.slow_ema = float(state["slow_ema"].item())
+        self.admit = bool(state["admit"].item())
+        self.bad_streak = int(state["bad_streak"].item())
+        self.good_streak = int(state["good_streak"].item())
+
+    @staticmethod
+    def _materialize_device_detector(state: dict[str, Tensor]) -> dict[str, object]:
+        transition = "none"
+        if bool(state["transition_off"].item()):
+            transition = "off"
+        elif bool(state["transition_on"].item()):
+            transition = "on"
+        return {
+            "fast_ema": float(state["fast_ema"].item()),
+            "slow_ema": float(state["slow_ema"].item()),
+            "d": float(state["d"].item()),
+            "admit": bool(state["admit"].item()),
+            "bad_streak": int(state["bad_streak"].item()),
+            "good_streak": int(state["good_streak"].item()),
+            "transition": transition,
+        }
 
     def observe_score_for_test(self, score: float) -> dict[str, object]:
+        self._sync_detector_to_host()
         state = self._next_detector(score)
         self._commit_detector(state)
         return copy.deepcopy(state)
+
+    def observe_score_device_for_test(self, score: float) -> dict[str, object]:
+        value = torch.tensor(score, dtype=torch.float32)
+        state = self._next_detector_device(value)
+        self._commit_device_detector(state)
+        self._sync_detector_to_host()
+        return self._materialize_device_detector(state)
 
     def set_detector_state_for_test(
         self,
@@ -248,6 +336,7 @@ class ProtectAdamW(Optimizer):
         self.admit = bool(admit)
         self.bad_streak = int(bad_streak)
         self.good_streak = int(good_streak)
+        self._device_detector = None
 
     @staticmethod
     def _validate_detector_state(
@@ -266,6 +355,7 @@ class ProtectAdamW(Optimizer):
             raise ValueError("invalid detector streak")
 
     def protect_state_dict(self) -> dict[str, object]:
+        self._sync_detector_to_host()
         return {
             "schema_version": self.schema_version,
             "mechanism_id": self.mechanism_id,
@@ -342,6 +432,91 @@ class ProtectAdamW(Optimizer):
             )
             raise
 
+    def _record_device_diagnostics(
+        self,
+        detector: dict[str, Tensor],
+        score: Tensor,
+        gradient_squared_norm: Tensor,
+        active_parameter_count: int,
+    ) -> None:
+        device = score.device
+        counters = self._diagnostic_counters
+        if counters is None:
+            counters = {
+                key: torch.zeros((), dtype=torch.int64, device=device)
+                for key in (
+                    "successful_steps",
+                    "admitted_steps",
+                    "rejected_steps",
+                    "transitions_off",
+                    "transitions_on",
+                )
+            }
+            self._diagnostic_counters = counters
+        elif counters["successful_steps"].device != device:
+            raise ValueError("diagnostic device changed")
+        admitted = detector["admit"].to(dtype=torch.int64)
+        counters["successful_steps"].add_(1)
+        counters["admitted_steps"].add_(admitted)
+        counters["rejected_steps"].add_(1 - admitted)
+        counters["transitions_off"].add_(detector["transition_off"].to(torch.int64))
+        counters["transitions_on"].add_(detector["transition_on"].to(torch.int64))
+        self._last_device_diagnostics = {
+            "q": score,
+            "d": detector["d"],
+            "gradient_norm": torch.sqrt(gradient_squared_norm),
+            "active_parameter_count": torch.tensor(
+                active_parameter_count, dtype=torch.int64, device=device
+            ),
+        }
+
+    def _materialize_cpu_step_diagnostics(
+        self,
+        detector: dict[str, Tensor],
+        score: Tensor,
+        gradient_squared_norm: Tensor,
+        active_parameter_count: int,
+    ) -> dict[str, object]:
+        state = self._materialize_device_detector(detector)
+        return {
+            "q": float(score.item()),
+            "F": state["fast_ema"],
+            "S": state["slow_ema"],
+            "d": state["d"],
+            "admit": state["admit"],
+            "transition": state["transition"],
+            "active_parameter_count": active_parameter_count,
+            "gradient_norm": math.sqrt(float(gradient_squared_norm.item())),
+            "overflow_skipped": False,
+            "protection_target": self.protection_target,
+        }
+
+    def diagnostics_summary(self, *, reset: bool = False) -> dict[str, object]:
+        self._sync_detector_to_host()
+        counters = self._diagnostic_counters
+        result: dict[str, object] = {
+            "successful_steps": 0,
+            "admitted_steps": 0,
+            "rejected_steps": 0,
+            "transitions_off": 0,
+            "transitions_on": 0,
+            "F": self.fast_ema,
+            "S": self.slow_ema,
+            "admit": self.admit,
+            "protection_target": self.protection_target,
+        }
+        if counters is not None:
+            for key, value in counters.items():
+                result[key] = int(value.item())
+        for key, value in self._last_device_diagnostics.items():
+            result[key] = (
+                int(value.item()) if key == "active_parameter_count" else float(value.item())
+            )
+        if reset and counters is not None:
+            for value in counters.values():
+                value.zero_()
+        return result
+
     @torch.no_grad()
     def step(self, closure: Any = None) -> Any:
         loss = None
@@ -377,15 +552,13 @@ class ProtectAdamW(Optimizer):
             dot = dot + torch.sum(gradient * reference, dtype=torch.float32)
             gg = gg + torch.sum(gradient * gradient, dtype=torch.float32)
             rr = rr + torch.sum(reference * reference, dtype=torch.float32)
-        rr_value = float(rr.item())
-        gg_value = float(gg.item())
-        if rr_value == 0:
-            score = 1.0
-        elif gg_value == 0:
-            score = 0.0
-        else:
-            score = float(torch.clamp(dot / torch.sqrt(gg * rr), -1, 1).item())
-        detector = self._next_detector(score)
+        one = torch.ones((), dtype=torch.float32, device=device)
+        zero = torch.zeros((), dtype=torch.float32, device=device)
+        denominator = torch.sqrt(gg * rr)
+        safe_denominator = torch.where(denominator == 0, one, denominator)
+        cosine = torch.clamp(dot / safe_denominator, -1, 1)
+        score = torch.where(rr == 0, one, torch.where(gg == 0, zero, cosine))
+        detector = self._next_detector_device(score)
         staged: list[tuple[nn.Parameter, Tensor, Tensor, Tensor, int]] = []
         for group, parameter, gradient, exp_avg, exp_avg_sq, step in active:
             beta1, beta2 = (float(value) for value in group["betas"])
@@ -413,7 +586,7 @@ class ProtectAdamW(Optimizer):
                     next_step,
                 )
             )
-        admitted = bool(detector["admit"]) or not self.protection_enabled
+        admitted = detector["admit"]
         for parameter, parameter_candidate, exp_avg_candidate, exp_avg_sq_candidate, step in staged:
             state = self.state[parameter]
             if not state:
@@ -422,23 +595,26 @@ class ProtectAdamW(Optimizer):
                 state["exp_avg_sq"] = torch.zeros_like(parameter)
             parameter.copy_(parameter_candidate)
             state["step"].fill_(float(step))
-            if admitted:
+            if not self.protection_enabled:
                 state["exp_avg"].copy_(exp_avg_candidate)
-            if admitted or self.protection_target == "m":
                 state["exp_avg_sq"].copy_(exp_avg_sq_candidate)
-        self._commit_detector(detector)
-        self.last_diagnostics = {
-            "q": score,
-            "F": self.fast_ema,
-            "S": self.slow_ema,
-            "d": float(detector["d"]),
-            "admit": bool(detector["admit"]),
-            "transition": str(detector["transition"]),
-            "active_parameter_count": len(active),
-            "gradient_norm": math.sqrt(gg_value),
-            "overflow_skipped": False,
-            "protection_target": self.protection_target,
-        }
+                continue
+            state["exp_avg"].copy_(torch.where(admitted, exp_avg_candidate, exp_avg))
+            if self.protection_target == "m":
+                state["exp_avg_sq"].copy_(exp_avg_sq_candidate)
+            else:
+                state["exp_avg_sq"].copy_(
+                    torch.where(admitted, exp_avg_sq_candidate, exp_avg_sq)
+                )
+        self._commit_device_detector(detector)
+        self._record_device_diagnostics(detector, score, gg, len(active))
+        if device.type == "cpu":
+            self._sync_detector_to_host()
+            self.last_diagnostics = self._materialize_cpu_step_diagnostics(
+                detector, score, gg, len(active)
+            )
+        else:
+            self.last_diagnostics = {}
         return loss
 
 

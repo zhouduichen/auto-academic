@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 
 import pytest
 import torch
@@ -146,6 +147,35 @@ def test_default_reachability_witness_switches_off_and_on() -> None:
     assert states[1]["admit"] is False
     assert states[44]["admit"] is False
     assert states[45]["admit"] is True
+
+
+def test_device_detector_matches_host_reference() -> None:
+    scores = [-1.0] * 10 + [1.0] * 36
+    host = ProtectAdamW(
+        [torch.nn.Parameter(torch.tensor([1.0]))], protection_target="m"
+    )
+    device = ProtectAdamW(
+        [torch.nn.Parameter(torch.tensor([1.0]))], protection_target="m"
+    )
+    expected = [host.observe_score_for_test(score) for score in scores]
+    actual = [device.observe_score_device_for_test(score) for score in scores]
+    assert actual == expected
+
+
+def test_step_has_no_direct_scalar_materialization() -> None:
+    assert ".item()" not in inspect.getsource(ProtectAdamW.step)
+
+
+def test_epoch_diagnostics_materialize_and_reset() -> None:
+    parameter = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = ProtectAdamW([parameter], protection_target="m")
+    for gradient in (0.2, -0.1, 0.3, -0.2, 0.4):
+        parameter.grad = torch.tensor([gradient])
+        optimizer.step()
+    summary = optimizer.diagnostics_summary(reset=True)
+    assert summary["successful_steps"] == 5
+    assert summary["admitted_steps"] + summary["rejected_steps"] == 5
+    assert optimizer.diagnostics_summary()["successful_steps"] == 0
 
 
 def test_parameter_update_is_independent_of_rejection() -> None:
