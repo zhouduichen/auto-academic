@@ -13,6 +13,13 @@ from torch.optim import Optimizer
 
 type ParamsT = Iterable[Tensor] | Iterable[dict[str, Any]]
 ProtectionTarget = Literal["m", "mv"]
+_DIAGNOSTIC_KEYS = (
+    "successful_steps",
+    "admitted_steps",
+    "rejected_steps",
+    "transitions_off",
+    "transitions_on",
+)
 
 
 def _validate_common_options(
@@ -154,7 +161,7 @@ class ProtectAdamW(Optimizer):
         self.last_diagnostics: dict[str, object] = {}
         self._device_detector: dict[str, Tensor] | None = None
         self._step_cache: dict[nn.Parameter, int] = {}
-        self._diagnostic_counters: dict[str, Tensor] | None = None
+        self._diagnostic_counters: Tensor | None = None
         self._last_device_diagnostics: dict[str, Tensor] = {}
 
     def _next_detector(self, score: float) -> dict[str, object]:
@@ -446,25 +453,22 @@ class ProtectAdamW(Optimizer):
         device = score.device
         counters = self._diagnostic_counters
         if counters is None:
-            counters = {
-                key: torch.zeros((), dtype=torch.int64, device=device)
-                for key in (
-                    "successful_steps",
-                    "admitted_steps",
-                    "rejected_steps",
-                    "transitions_off",
-                    "transitions_on",
-                )
-            }
+            counters = torch.zeros(5, dtype=torch.int64, device=device)
             self._diagnostic_counters = counters
-        elif counters["successful_steps"].device != device:
+        elif counters.device != device:
             raise ValueError("diagnostic device changed")
         admitted = detector["admit"].to(dtype=torch.int64)
-        counters["successful_steps"].add_(1)
-        counters["admitted_steps"].add_(admitted)
-        counters["rejected_steps"].add_(1 - admitted)
-        counters["transitions_off"].add_(detector["transition_off"].to(torch.int64))
-        counters["transitions_on"].add_(detector["transition_on"].to(torch.int64))
+        counters.add_(
+            torch.stack(
+                (
+                    torch.ones_like(admitted),
+                    admitted,
+                    1 - admitted,
+                    detector["transition_off"].to(torch.int64),
+                    detector["transition_on"].to(torch.int64),
+                )
+            )
+        )
         self._last_device_diagnostics = {
             "q": score,
             "d": detector["d"],
@@ -510,15 +514,14 @@ class ProtectAdamW(Optimizer):
             "protection_target": self.protection_target,
         }
         if counters is not None:
-            for key, value in counters.items():
+            for key, value in zip(_DIAGNOSTIC_KEYS, counters, strict=True):
                 result[key] = int(value.item())
         for key, value in self._last_device_diagnostics.items():
             result[key] = (
                 int(value.item()) if key == "active_parameter_count" else float(value.item())
             )
         if reset and counters is not None:
-            for value in counters.values():
-                value.zero_()
+            counters.zero_()
         return result
 
     @torch.no_grad()
