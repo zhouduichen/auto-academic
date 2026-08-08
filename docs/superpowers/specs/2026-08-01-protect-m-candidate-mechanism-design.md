@@ -564,6 +564,28 @@ the M1 tuning wall-clock cap. Record optimizer-only profiler time plus peak allo
 reserved VRAM; any OOM fails. Sentinel timing is an implementation rejection check, not a
 source of detector values or method selection evidence.
 
+### 14.3 Approved performance repair
+
+The first conforming Windows sentinel passed every functional check but measured
+`1.104x` for Protect-M and `1.101x` for Protect-MV, so the Pilot remained blocked. The
+approved repair keeps the `1.05x` gate and every equation, threshold, state transition,
+parameter update, and persistent hold/commit rule unchanged.
+
+The repair may keep the optimizer-wide detector scalars as device-resident FP32 and boolean
+scalar tensors during `step`, evaluate the state machine on the GPU, and use a device boolean
+to select persistent moment commits. It must not call `.item()` or otherwise synchronize the
+host inside the candidate step. The AdamW candidate equations and their locked per-parameter
+floating-point order remain unchanged; batching or fusion may not alter those equations.
+Detector and diagnostic values are materialized on the host only outside the timed optimizer
+path. Per-step JSON logging is replaced by deferred transition/checkpoint summaries so it
+cannot introduce a candidate-only synchronization or file-write penalty.
+
+CPU reference tests must prove detector-state and admission-decision equivalence for the
+frozen reachability witness and deterministic score sequences. Protection-disabled AdamW
+parity, atomic nonfinite rejection, serialization/resume, functional GPU checks, and the
+`1.05x` performance sentinel remain mandatory. If this implementation-only repair still
+misses the cap, the Pilot remains blocked; the gate may not be relaxed or bypassed.
+
 ## 15. User-Review Register and Remaining Freeze Gates
 
 There are no hidden default values. User approval on 2026-08-08 resolved the scientific and
