@@ -212,3 +212,96 @@ Use one serial process, no GPU power cap, and CPU affinity limited to 12 logical
 - [ ] **Step 5: Verify live execution**
 
 Confirm the scheduled task reports running/success, exactly one Pilot Python process exists, GPU utilization becomes nonzero during forward/backward work, the first cell writes metrics, and no test artifact is loaded.
+
+### Task 5: Remove candidate-only synchronization and clear the performance gate
+
+**Files:**
+- Modify: `experiments/m1_optimizers.py`
+- Modify: `experiments/m1_calibration_clean.py`
+- Modify: `experiments/m1_calibration_noisy.py`
+- Modify: `tests/test_m1_optimizers.py`
+- Modify: `tests/test_m1_pilot_runner.py`
+
+**Interfaces:**
+- Produces: device-resident detector state inside `ProtectAdamW.step()` with no `.item()` or
+  host synchronization on CUDA.
+- Produces: `ProtectAdamW.diagnostics_summary(*, reset: bool = False) -> dict[str, object]`
+  for one host materialization at an epoch/checkpoint boundary.
+- Preserves: `protect_state_dict()` schema version 1, `load_state_dict()`, test-only host
+  detector fixtures, protection-disabled AdamW bit parity, and the frozen Pilot CLI/config.
+
+- [ ] **Step 1: Add failing detector and deferred-diagnostic tests**
+
+```python
+def test_device_detector_matches_host_reference():
+    optimizer, parameter = one_parameter_optimizer("mv")
+    scores = [-1.0] * 10 + [1.0] * 36
+    expected = host_reference_states(scores)
+    actual = [optimizer.observe_score_device_for_test(score) for score in scores]
+    assert actual == expected
+
+def test_cuda_step_does_not_materialize_detector_scalars(monkeypatch):
+    optimizer, parameter = cuda_optimizer("m")
+    monkeypatch.setattr(torch.Tensor, "item", forbidden_item)
+    parameter.grad = torch.ones_like(parameter)
+    optimizer.step()
+
+def test_epoch_diagnostics_materialize_once():
+    optimizer, parameter = one_parameter_optimizer("m")
+    run_finite_steps(optimizer, parameter, 5)
+    row = optimizer.diagnostics_summary(reset=True)
+    assert row["successful_steps"] == 5
+    assert optimizer.diagnostics_summary()["successful_steps"] == 0
+```
+
+- [ ] **Step 2: Run the focused tests and confirm they fail**
+
+Run: `uv run --locked pytest tests/test_m1_optimizers.py -q`
+Expected: failures because the device detector and `diagnostics_summary` do not exist and
+the current CUDA path calls `.item()`.
+
+- [ ] **Step 3: Implement the device-resident detector path**
+
+Keep lazy FP32 scalar tensors for `fast_ema`, `slow_ema`, `q`, `d`, `dot`, `gg`, and `rr`,
+plus boolean scalar tensors for admission and the two streaks. Compute score zero cases and
+the two-crossing state machine with `torch.where`; do not branch on or materialize a CUDA
+scalar. Use the resulting boolean scalar with `torch.where` when committing protected
+moments. Leave the per-parameter AdamW candidate operation order unchanged. On CPU, preserve
+the existing host fixture API and plain-Python diagnostics used by unit tests.
+
+- [ ] **Step 4: Defer candidate diagnostics to epoch boundaries**
+
+Replace the per-training-step `_optimizer_diagnostic` call in both runners with one
+`diagnostics_summary(reset=True)` call after the epoch. Write one JSONL row containing
+`epoch`, `optimizer_steps`, detector endpoints, admission/transition counts, and gradient
+summary. Update resume truncation to count completed epochs rather than optimizer steps for
+candidate diagnostics. AdamW and CAdam behavior remains unchanged.
+
+- [ ] **Step 5: Verify local recurrence, serialization, runner, and gate tests**
+
+Run: `uv run --locked pytest tests/test_m1_optimizers.py tests/test_m1_pilot_runner.py tests/test_m1_calibration_clean.py tests/test_m1_calibration_noisy.py -q`
+Run: `uv run --locked ruff check experiments/m1_optimizers.py experiments/m1_calibration_clean.py experiments/m1_calibration_noisy.py tests/test_m1_optimizers.py tests/test_m1_pilot_runner.py`
+Expected: all tests and lint checks pass; protection-disabled AdamW comparisons remain
+bit-exact and serialized schema remains version 1.
+
+- [ ] **Step 6: Commit and deploy the repair**
+
+```bash
+git add experiments/m1_optimizers.py experiments/m1_calibration_clean.py \
+  experiments/m1_calibration_noisy.py tests/test_m1_optimizers.py \
+  tests/test_m1_pilot_runner.py
+git commit -m "perf: remove protect optimizer host synchronization"
+git push origin codex/m05-direct-experiment
+```
+
+Update `C:\arw-m0` to the exact commit using the existing CUDA environment. Regenerate and
+validate Pilot noise bundles `1301,1302,1303` so their source commit matches the repaired
+runner; do not run `uv sync` on Windows.
+
+- [ ] **Step 7: Rerun the detached sentinel and conditionally start Pilot**
+
+Start `ARW-M1-ProtectPilot` through the hidden detached launcher. Require functional pass,
+`test_loaded=false`, and both candidate ratios at most `1.05`. Verify
+`SENTINEL_PASS.json`, then confirm the same child process enters `experiments.m1_pilot`, one
+Pilot cell begins writing artifacts, GPU utilization is nonzero, CPU affinity is `0xFFF`,
+and SSH disconnect does not terminate the process.
