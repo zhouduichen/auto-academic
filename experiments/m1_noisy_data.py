@@ -26,6 +26,7 @@ PRIVATE_NAMES = {
     "transition_probabilities.npy",
     "channel_statistics.npy",
 }
+PILOT_NOISE_SEEDS = (1301, 1302, 1303)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -352,7 +353,10 @@ def main() -> None:
     generate.add_argument("--training", type=Path, required=True)
     generate.add_argument("--audit", type=Path, required=True)
     generate.add_argument(
-        "--noise-seed", type=int, choices=(1101, 1102, 1201, 1202), required=True
+        "--noise-seed",
+        type=int,
+        choices=(1101, 1102, 1201, 1202, *PILOT_NOISE_SEEDS),
+        required=True,
     )
     generate.add_argument("--opaque-id", required=True)
     validate = commands.add_parser("validate")

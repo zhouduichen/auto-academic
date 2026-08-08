@@ -117,6 +117,7 @@ def run(
         start_epoch = int(state["next_epoch"])
     metrics_path = output_dir / "epoch_metrics.jsonl"
     gradient_path = output_dir / "gradient_norms.jsonl"
+    diagnostic_path = output_dir / "optimizer_diagnostics.jsonl"
     existing_metrics = (
         [json.loads(line) for line in metrics_path.read_text().splitlines()]
         if metrics_path.is_file()
@@ -139,6 +140,17 @@ def run(
         "\n".join(existing_norms[:completed_steps]) + ("\n" if completed_steps else ""),
         encoding="utf-8",
     )
+    existing_diagnostics = (
+        diagnostic_path.read_text(encoding="utf-8").splitlines()
+        if diagnostic_path.is_file()
+        else []
+    )
+    if len(existing_diagnostics) < completed_steps and config.method != "adamw":
+        raise RuntimeError("checkpoint is ahead of optimizer diagnostics")
+    diagnostic_path.write_text(
+        "\n".join(existing_diagnostics[:completed_steps]) + ("\n" if completed_steps else ""),
+        encoding="utf-8",
+    )
     elapsed_offset = (
         float(existing_metrics[start_epoch - 1]["elapsed_training_seconds"]) if start_epoch else 0.0
     )
@@ -157,6 +169,7 @@ def run(
         model.train()
         train_loss, seen = 0.0, 0
         norms: list[float] = []
+        diagnostics: list[dict[str, object]] = []
         for images, labels in train_loader:
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
@@ -168,6 +181,9 @@ def run(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
             optimizer_steps += 1
+            diagnostic = clean._optimizer_diagnostic(optimizer, optimizer_steps)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
             norms.append(norm)
             train_loss += float(loss.detach()) * len(labels)
             seen += len(labels)
@@ -188,6 +204,12 @@ def run(
                 stream.write(payload + "\n")
         with metrics_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
+        if diagnostics:
+            with diagnostic_path.open("a", encoding="utf-8") as stream:
+                for diagnostic in diagnostics:
+                    stream.write(
+                        json.dumps(diagnostic, separators=(",", ":"), allow_nan=False) + "\n"
+                    )
         clean._checkpoint(checkpoint_path, model, optimizer, epoch + 1)
         print(json.dumps(row, sort_keys=True), flush=True)
     peak = torch.cuda.max_memory_allocated(device) / 1024**3 if device.type == "cuda" else 0.0
@@ -200,6 +222,7 @@ def run(
         "peak_vram_gb": peak,
         "source_commit": provenance["source_commit"],
         "noise_bundle_sha256": _sha(training / "manifest.json"),
+        "method": config.method,
         "test_loaded": False,
     }
     clean._write_json(summary_path, summary)
@@ -216,7 +239,9 @@ def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, choices=(101, 102, 201, 202), required=True)
+    parser.add_argument(
+        "--seed", type=int, choices=(101, 102, 201, 202, 301, 302, 303), required=True
+    )
     parser.add_argument("--training", type=Path, required=True)
     parser.add_argument("--image-store", type=Path, required=True)
     parser.add_argument("--tuning-store", type=Path, required=True)
@@ -229,6 +254,7 @@ def main() -> None:
     parser.add_argument("--beta2", type=float, default=0.999)
     parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
+    parser.add_argument("--method", choices=clean.PILOT_METHODS, default="adamw")
     args = parser.parse_args()
     config = clean.Config(
         seed=args.seed,
@@ -242,6 +268,7 @@ def main() -> None:
         weight_decay=args.weight_decay,
         betas=(args.beta1, args.beta2),
         max_grad_norm=args.max_grad_norm,
+        method=args.method,
     )
     print(
         json.dumps(

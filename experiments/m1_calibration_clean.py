@@ -24,6 +24,9 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CIFAR100
 
 from experiments.m0_optimizer_state import m0_run as m0
+from experiments.m1_optimizers import CAdamW, ProtectAdamW
+
+PILOT_METHODS = ("adamw", "cadam", "protect-m", "protect-mv")
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,7 @@ class Config:
     lora_rank: int = 8
     workers: int = 4
     device: str = "cuda"
+    method: str = "adamw"
 
 
 class IndexedCIFAR100(Dataset[tuple[Tensor, int]]):
@@ -131,7 +135,7 @@ def _build_model(config: Config) -> nn.Module:
     )
 
 
-def _build_optimizer(model: nn.Module, config: Config) -> torch.optim.AdamW:
+def _build_optimizer(model: nn.Module, config: Config) -> torch.optim.Optimizer:
     decay: list[nn.Parameter] = []
     no_decay: list[nn.Parameter] = []
     for name, parameter in model.named_parameters():
@@ -140,16 +144,48 @@ def _build_optimizer(model: nn.Module, config: Config) -> torch.optim.AdamW:
         (no_decay if name.endswith(".bias") or "norm" in name.lower() else decay).append(parameter)
     if not decay or not no_decay:
         raise RuntimeError("AdamW parameter-group audit failed")
-    return torch.optim.AdamW(
-        [
-            {"params": decay, "weight_decay": config.weight_decay},
-            {"params": no_decay, "weight_decay": 0.0},
-        ],
-        lr=config.learning_rate,
-        betas=config.betas,
-        eps=config.eps,
-        amsgrad=False,
-    )
+    groups = [
+        {"params": decay, "weight_decay": config.weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+    common = {
+        "lr": config.learning_rate,
+        "betas": config.betas,
+        "eps": config.eps,
+    }
+    if config.method == "adamw":
+        return torch.optim.AdamW(groups, **common, amsgrad=False, foreach=False, fused=False)
+    if config.method == "cadam":
+        return CAdamW(groups, **common)
+    if config.method in {"protect-m", "protect-mv"}:
+        return ProtectAdamW(
+            groups,
+            **common,
+            protection_target=config.method.removeprefix("protect-"),
+            alpha_fast=0.9,
+            alpha_slow=0.99,
+            tau=0.1,
+        )
+    raise ValueError(f"unsupported M1 method: {config.method}")
+
+
+def _optimizer_diagnostic(
+    optimizer: torch.optim.Optimizer, step: int
+) -> dict[str, object] | None:
+    value = getattr(optimizer, "last_diagnostics", None)
+    if not isinstance(value, dict) or not value:
+        return None
+    return {"step": step, **value}
+
+
+def _write_optimizer_diagnostic(
+    optimizer: torch.optim.Optimizer, path: Path, step: int
+) -> None:
+    row = _optimizer_diagnostic(optimizer, step)
+    if row is None:
+        return
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
 
 
 def _global_gradient_norm(model: nn.Module) -> float:
@@ -259,6 +295,7 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
 
     metrics_path = output_dir / "epoch_metrics.jsonl"
     gradient_path = output_dir / "gradient_norms.jsonl"
+    diagnostic_path = output_dir / "optimizer_diagnostics.jsonl"
     elapsed_offset = 0.0
     if metrics_path.is_file():
         rows = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines()]
@@ -281,6 +318,15 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
             ),
             encoding="utf-8",
         )
+    if diagnostic_path.is_file():
+        rows = diagnostic_path.read_text(encoding="utf-8").splitlines()
+        completed_steps = start_epoch * (len(split["train"]) // config.batch_size)
+        if len(rows) < completed_steps and config.method != "adamw":
+            raise RuntimeError("checkpoint is ahead of optimizer diagnostics")
+        diagnostic_path.write_text(
+            "\n".join(rows[:completed_steps]) + ("\n" if completed_steps else ""),
+            encoding="utf-8",
+        )
     started = time.monotonic()
     optimizer_steps = start_epoch * (len(split["train"]) // config.batch_size)
     for epoch in range(start_epoch, config.epochs):
@@ -300,6 +346,7 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
         train_loss = 0.0
         seen = 0
         epoch_norms: list[float] = []
+        epoch_diagnostics: list[dict[str, object]] = []
         for images, labels in train_loader:
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
@@ -311,6 +358,9 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
             optimizer_steps += 1
+            diagnostic = _optimizer_diagnostic(optimizer, optimizer_steps)
+            if diagnostic is not None:
+                epoch_diagnostics.append(diagnostic)
             epoch_norms.append(norm)
             train_loss += float(loss.detach()) * len(labels)
             seen += len(labels)
@@ -331,6 +381,12 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
                 stream.write(payload + "\n")
         with metrics_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(row, separators=(",", ":"), allow_nan=False) + "\n")
+        if epoch_diagnostics:
+            with diagnostic_path.open("a", encoding="utf-8") as stream:
+                for diagnostic in epoch_diagnostics:
+                    stream.write(
+                        json.dumps(diagnostic, separators=(",", ":"), allow_nan=False) + "\n"
+                    )
         _checkpoint(checkpoint_path, model, optimizer, epoch + 1)
         print(json.dumps(row, sort_keys=True), flush=True)
 
@@ -343,6 +399,7 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
         "optimizer_steps": optimizer_steps,
         "peak_vram_gb": peak_vram,
         "source_commit": provenance["source_commit"],
+        "method": config.method,
         "test_loaded": False,
     }
     _write_json(summary_path, summary)
@@ -357,7 +414,9 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
 
 def parse_args() -> tuple[Config, Path, Path]:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, choices=(101, 102, 201, 202), required=True)
+    parser.add_argument(
+        "--seed", type=int, choices=(101, 102, 201, 202, 301, 302, 303), required=True
+    )
     parser.add_argument("--data-dir", type=Path, default=Path("./data/cifar100"))
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=50)
@@ -369,6 +428,7 @@ def parse_args() -> tuple[Config, Path, Path]:
     parser.add_argument("--beta2", type=float, default=0.999)
     parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
+    parser.add_argument("--method", choices=PILOT_METHODS, default="adamw")
     args = parser.parse_args()
     if not 1 <= args.epochs <= 50:
         parser.error("epochs must be in [1, 50]")
@@ -384,6 +444,7 @@ def parse_args() -> tuple[Config, Path, Path]:
         weight_decay=args.weight_decay,
         betas=(args.beta1, args.beta2),
         max_grad_norm=args.max_grad_norm,
+        method=args.method,
     )
     return config, args.data_dir, args.output_dir
 
