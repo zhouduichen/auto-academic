@@ -561,9 +561,10 @@ class ProtectAdamW(Optimizer):
             return loss
         if device is None:
             raise RuntimeError("active parameter device was not resolved")
-        finite = torch.ones((), dtype=torch.bool, device=device)
-        for _group, _parameter, gradient, _exp_avg, _exp_avg_sq, _step in active:
-            finite = finite & torch.isfinite(gradient).all()
+        gradients = [gradient for _group, _parameter, gradient, *_ in active]
+        finite = torch.isfinite(
+            torch.stack(torch._foreach_norm(gradients, ord=float("inf")))
+        ).all()
         if not bool(finite):
             raise FloatingPointError("non-finite gradient")
         dot = torch.zeros((), dtype=torch.float32, device=device)
