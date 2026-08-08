@@ -559,7 +559,9 @@ class ProtectAdamW(Optimizer):
         cosine = torch.clamp(dot / safe_denominator, -1, 1)
         score = torch.where(rr == 0, one, torch.where(gg == 0, zero, cosine))
         detector = self._next_detector_device(score)
-        staged: list[tuple[nn.Parameter, Tensor, Tensor, Tensor, int]] = []
+        staged: list[
+            tuple[nn.Parameter, Tensor, Tensor, Tensor, Tensor, Tensor, int]
+        ] = []
         for group, parameter, gradient, exp_avg, exp_avg_sq, step in active:
             beta1, beta2 = (float(value) for value in group["betas"])
             next_step = step + 1
@@ -581,13 +583,23 @@ class ProtectAdamW(Optimizer):
                 (
                     parameter,
                     parameter_candidate,
+                    exp_avg,
+                    exp_avg_sq,
                     exp_avg_candidate,
                     exp_avg_sq_candidate,
                     next_step,
                 )
             )
         admitted = detector["admit"]
-        for parameter, parameter_candidate, exp_avg_candidate, exp_avg_sq_candidate, step in staged:
+        for (
+            parameter,
+            parameter_candidate,
+            exp_avg,
+            exp_avg_sq,
+            exp_avg_candidate,
+            exp_avg_sq_candidate,
+            step,
+        ) in staged:
             state = self.state[parameter]
             if not state:
                 state["step"] = torch.tensor(0.0, dtype=torch.float32)

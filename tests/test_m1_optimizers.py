@@ -178,6 +178,17 @@ def test_epoch_diagnostics_materialize_and_reset() -> None:
     assert optimizer.diagnostics_summary()["successful_steps"] == 0
 
 
+def test_device_commit_supports_multiple_parameter_shapes() -> None:
+    first = torch.nn.Parameter(torch.ones(3, 2))
+    second = torch.nn.Parameter(torch.ones(4))
+    optimizer = ProtectAdamW([first, second], protection_target="mv")
+    first.grad = torch.full_like(first, 0.2)
+    second.grad = torch.full_like(second, -0.1)
+    optimizer.step()
+    assert torch.isfinite(first).all()
+    assert torch.isfinite(second).all()
+
+
 def test_parameter_update_is_independent_of_rejection() -> None:
     rejected, rejected_parameter = _forced_optimizer("m")
     admitted, admitted_parameter = _forced_optimizer("m")
