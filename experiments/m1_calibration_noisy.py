@@ -253,7 +253,7 @@ def main() -> None:
     parser.add_argument("--beta2", type=float, default=0.999)
     parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
-    parser.add_argument("--method", choices=clean.PILOT_METHODS, default="adamw")
+    parser.add_argument("--method", choices=clean.RUNNER_METHODS, default="adamw")
     args = parser.parse_args()
     config = clean.Config(
         seed=args.seed,

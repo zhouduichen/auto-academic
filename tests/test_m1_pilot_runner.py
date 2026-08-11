@@ -9,13 +9,14 @@ from torch import nn
 
 from experiments.m1_calibration_clean import (
     PILOT_METHODS,
+    RUNNER_METHODS,
     Config,
     _build_optimizer,
     _optimizer_epoch_diagnostic,
     _write_optimizer_diagnostic,
 )
 from experiments.m1_noisy_data import PILOT_NOISE_SEEDS
-from experiments.m1_optimizers import CAdamW, ProtectAdamW
+from experiments.m1_optimizers import CAdamW, ProtectAdamW, ProtectM11AdamW
 from experiments.m1_pilot import build_matrix, evaluate_candidate, validate_sentinel
 
 
@@ -46,6 +47,26 @@ def test_build_optimizer_uses_frozen_method(method: str) -> None:
         assert isinstance(optimizer, ProtectAdamW)
         assert optimizer.protection_target == method.removeprefix("protect-")
         assert (optimizer.alpha_fast, optimizer.alpha_slow, optimizer.tau) == (0.9, 0.99, 0.1)
+
+
+def test_m11_is_runner_only_and_does_not_expand_frozen_pilot() -> None:
+    assert "protect-m11" in RUNNER_METHODS
+    assert "protect-m11" not in PILOT_METHODS
+    assert len(build_matrix()) == 24
+    config = Config(
+        seed=301,
+        augmentation_seed=10_301,
+        epochs=3,
+        method="protect-m11",
+        device="cpu",
+    )
+    optimizer = _build_optimizer(TinyModel(), config)
+    assert isinstance(optimizer, ProtectM11AdamW)
+    assert (optimizer.alpha, optimizer.threshold, optimizer.warmup_steps) == (
+        0.99,
+        3.0,
+        1250,
+    )
 
 
 def test_invalid_method_is_rejected() -> None:

@@ -24,9 +24,10 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CIFAR100
 
 from experiments.m0_optimizer_state import m0_run as m0
-from experiments.m1_optimizers import CAdamW, ProtectAdamW
+from experiments.m1_optimizers import CAdamW, ProtectAdamW, ProtectM11AdamW
 
 PILOT_METHODS = ("adamw", "cadam", "protect-m", "protect-mv")
+RUNNER_METHODS = (*PILOT_METHODS, "protect-m11")
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,14 @@ def _build_optimizer(model: nn.Module, config: Config) -> torch.optim.Optimizer:
         return torch.optim.AdamW(groups, **common, amsgrad=False, foreach=False, fused=False)
     if config.method == "cadam":
         return CAdamW(groups, **common)
+    if config.method == "protect-m11":
+        return ProtectM11AdamW(
+            groups,
+            **common,
+            alpha=0.99,
+            threshold=3.0,
+            warmup_steps=1250,
+        )
     if config.method in {"protect-m", "protect-mv"}:
         return ProtectAdamW(
             groups,
@@ -437,7 +446,7 @@ def parse_args() -> tuple[Config, Path, Path]:
     parser.add_argument("--beta2", type=float, default=0.999)
     parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
-    parser.add_argument("--method", choices=PILOT_METHODS, default="adamw")
+    parser.add_argument("--method", choices=RUNNER_METHODS, default="adamw")
     args = parser.parse_args()
     if not 1 <= args.epochs <= 50:
         parser.error("epochs must be in [1, 50]")
