@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from experiments import causal_transport_bundle as bundle
+from experiments import causal_transport_sentinel as sentinel
 from experiments.m0_optimizer_state import m0_run as m0
 from src.arw import m0_core
 
@@ -130,3 +131,27 @@ def test_snapshot_pair_is_atomic(tmp_path: Path) -> None:
     (tmp_path / "noisy-exposure.pt").write_bytes(b"corrupt")
     with pytest.raises(RuntimeError, match="snapshot"):
         bundle.load_snapshot_pair(tmp_path, contract_sha256="a" * 64)
+
+
+def test_sentinel_requires_every_functional_check() -> None:
+    record = {
+        "cuda": True,
+        "functional": {name: True for name in sentinel.REQUIRED_CHECKS},
+        "peak_vram_gb": 1.0,
+        "elapsed_seconds": 2.0,
+        "test_loaded": False,
+    }
+    assert sentinel.evaluate_sentinel(record)["status"] == "passed"
+    record["functional"]["resume_atomic"] = False
+    assert sentinel.evaluate_sentinel(record)["status"] == "failed"
+
+
+def test_sentinel_enforces_resource_limits() -> None:
+    record = {
+        "cuda": True,
+        "functional": {name: True for name in sentinel.REQUIRED_CHECKS},
+        "peak_vram_gb": 8.0,
+        "elapsed_seconds": 2.0,
+        "test_loaded": False,
+    }
+    assert sentinel.evaluate_sentinel(record)["status"] == "failed"
