@@ -32,7 +32,7 @@ def _legacy_fixture(
                 "test_loaded": False,
             },
         )
-        _write_json(cell / "sha256_manifest.json", {})
+        _write_json(cell / "sha256_manifest.json", [])
     _write_json(m06 / "COMPLETE.json", {"status": "succeeded", "completed_bundles": 20})
     m1 = root / "m1"
     _write_json(

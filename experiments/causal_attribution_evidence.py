@@ -27,11 +27,15 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _read_json(path: Path) -> dict[str, object]:
+def _read_json_value(path: Path) -> object:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"invalid legacy JSON: {path}") from error
+
+
+def _read_json(path: Path) -> dict[str, object]:
+    value = _read_json_value(path)
     if not isinstance(value, dict):
         raise RuntimeError(f"legacy JSON must be an object: {path}")
     return value
@@ -87,7 +91,9 @@ def inventory_legacy(
         manifest_path = summary_path.with_name("sha256_manifest.json")
         if not manifest_path.is_file():
             raise RuntimeError("expected exactly 20 complete M0.6 bundles")
-        _read_json(manifest_path)
+        manifest = _read_json_value(manifest_path)
+        if not isinstance(manifest, list | dict):
+            raise RuntimeError("M0.6 SHA manifest must be a JSON array or object")
         summary = _read_json(summary_path)
         if summary.get("status") != "succeeded" or summary.get("test_loaded") is not False:
             raise RuntimeError("M0.6 summary status or test isolation failed")
