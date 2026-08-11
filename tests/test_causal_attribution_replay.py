@@ -2,11 +2,24 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 from experiments import causal_attribution_replay as replay
+from experiments.m0_optimizer_state import m0_run as m0
+
+
+class TinyPixelModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.empty(2, 2))
+        torch.nn.init.normal_(self.weight)
+
+    def forward(self, pixel_values: torch.Tensor) -> SimpleNamespace:
+        return SimpleNamespace(logits=torch.nn.functional.linear(pixel_values, self.weight))
 
 
 def _state(seed: int, step: int = 2) -> replay.CheckpointState:
@@ -124,3 +137,38 @@ def test_common_replay_core_is_bitwise_deterministic() -> None:
     assert first == second
     assert {row["branch"] for row in first} == {"CC", "CN", "NC", "NN"}
     assert all(row["test_loaded"] is False for row in first)
+
+
+def test_factorial_measurement_core_is_deterministic_and_complete() -> None:
+    clean = _state(1)
+    noisy = _state(2)
+    branches = replay.build_factorial_branches(clean, noisy)
+    model = TinyPixelModel()
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=0.01, foreach=False, fused=False
+    )
+    batch = (torch.tensor([[1.0, -1.0]]), torch.tensor([0]))
+    cached = [(batch[0].clone(), batch[1].clone()) for _ in range(512)]
+    probe = [(torch.tensor([[0.25, 0.75]]), torch.tensor([1]))]
+    tuning = DataLoader(
+        TensorDataset(torch.tensor([[0.5, -0.5]]), torch.tensor([0])), batch_size=1
+    )
+    common_rng = replay.capture_common_rng()
+    m0.restore_rng_state(common_rng)
+    first_rows, first = replay.measure_factorial_replay(
+        model, optimizer, branches, cached, probe, tuning, torch.device("cpu")
+    )
+    m0.restore_rng_state(common_rng)
+    second_rows, second = replay.measure_factorial_replay(
+        model, optimizer, branches, cached, probe, tuning, torch.device("cpu")
+    )
+    assert first_rows == second_rows
+    assert first == second
+    assert set(first) == {"endpoints", "effects", "common_rng_sha256", "test_loaded"}
+    assert set(first["endpoints"]) == {"CC", "CN", "NC", "NN"}
+    assert set(first["effects"]) == {
+        "clean_loss_excess_auc_128",
+        "tuning_loss_h512",
+    }
+    assert len(first_rows) == 4 * len(replay.HORIZONS)
+    assert first["test_loaded"] is False

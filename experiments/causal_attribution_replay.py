@@ -512,40 +512,16 @@ def _validate_existing(request: ReplayRequest) -> dict[str, object] | None:
     return summary
 
 
-def run_replay(request: ReplayRequest) -> dict[str, object]:
-    existing = _validate_existing(request)
-    if existing is not None:
-        return existing
-    started = time.monotonic()
-    config, input_binding = _validate_request(request)
-    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-    torch.set_num_threads(min(4, os.cpu_count() or 1))
-    m0.seed_everything(request.seed)
-    device = torch.device(request.device)
-    provenance = m0.build_provenance(device)
-    if provenance["source_commit"] != request.source_commit:
-        raise RuntimeError("runtime provenance does not match replay request")
-    if device.type == "cuda":
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for evidence replay")
-        torch.cuda.reset_peak_memory_stats(device)
-
-    model = clean._build_model(config).to(device)
-    optimizer = clean._build_optimizer(model, config)
-    clean_payload = _load_payload(request.clean_checkpoint, device)
-    noisy_payload = _load_payload(request.noisy_checkpoint, device)
-    trainable_names = {
-        name for name, parameter in model.named_parameters() if parameter.requires_grad
-    }
-    _compare_full_model_states(clean_payload, noisy_payload, trainable_names)
-    clean_state = _state_from_payload(model, clean_payload)
-    noisy_state = _state_from_payload(model, noisy_payload)
-    validate_checkpoint_pair(clean_state, noisy_state)
-    if clean_state.next_epoch != request.checkpoint_epoch:
-        raise RuntimeError("checkpoint epoch does not match replay request")
-    branches = build_factorial_branches(clean_state, noisy_state)
-    cached = _cached_continuation(request, config, clean_state.next_epoch)
-    probe, tuning_loader = _probe_and_tuning_loaders(request, config)
+def measure_factorial_replay(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    branches: dict[str, m0_core.BranchState],
+    cached: list[tuple[Tensor, Tensor]],
+    probe: list[tuple[Tensor, Tensor]],
+    tuning_loader: DataLoader,
+    device: torch.device,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Measure one complete crossed replay without performing file I/O."""
     criterion = nn.CrossEntropyLoss()
     common_rng = capture_common_rng()
     references: dict[int, tuple[m0_core.BranchState, Tensor, float, Tensor]] = {}
@@ -601,7 +577,14 @@ def run_replay(request: ReplayRequest) -> dict[str, object]:
         return row
 
     rows = run_cached_branches(
-        model, optimizer, branches, cached, criterion, common_rng, HORIZONS, measure_branch
+        model,
+        optimizer,
+        branches,
+        cached,
+        criterion,
+        common_rng,
+        HORIZONS,
+        measure_branch,
     )
     by_branch = {
         branch: [row for row in rows if row["branch"] == branch] for branch in BRANCH_NAMES
@@ -628,6 +611,53 @@ def run_replay(request: ReplayRequest) -> dict[str, object]:
             }
         ),
     }
+    return rows, {
+        "endpoints": endpoints,
+        "effects": effects,
+        "common_rng_sha256": m0._state_sha(common_rng),
+        "test_loaded": False,
+    }
+
+
+def run_replay(request: ReplayRequest) -> dict[str, object]:
+    existing = _validate_existing(request)
+    if existing is not None:
+        return existing
+    started = time.monotonic()
+    config, input_binding = _validate_request(request)
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.set_num_threads(min(4, os.cpu_count() or 1))
+    m0.seed_everything(request.seed)
+    device = torch.device(request.device)
+    provenance = m0.build_provenance(device)
+    if provenance["source_commit"] != request.source_commit:
+        raise RuntimeError("runtime provenance does not match replay request")
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for evidence replay")
+        torch.cuda.reset_peak_memory_stats(device)
+
+    model = clean._build_model(config).to(device)
+    optimizer = clean._build_optimizer(model, config)
+    clean_payload = _load_payload(request.clean_checkpoint, device)
+    noisy_payload = _load_payload(request.noisy_checkpoint, device)
+    trainable_names = {
+        name for name, parameter in model.named_parameters() if parameter.requires_grad
+    }
+    _compare_full_model_states(clean_payload, noisy_payload, trainable_names)
+    clean_state = _state_from_payload(model, clean_payload)
+    noisy_state = _state_from_payload(model, noisy_payload)
+    validate_checkpoint_pair(clean_state, noisy_state)
+    if clean_state.next_epoch != request.checkpoint_epoch:
+        raise RuntimeError("checkpoint epoch does not match replay request")
+    branches = build_factorial_branches(clean_state, noisy_state)
+    cached = _cached_continuation(request, config, clean_state.next_epoch)
+    probe, tuning_loader = _probe_and_tuning_loaders(request, config)
+    rows, measurement = measure_factorial_replay(
+        model, optimizer, branches, cached, probe, tuning_loader, device
+    )
+    endpoints = measurement["endpoints"]
+    effects = measurement["effects"]
     elapsed = time.monotonic() - started
     peak_vram = (
         torch.cuda.max_memory_allocated(device) / 1024**3 if device.type == "cuda" else 0.0
@@ -657,7 +687,7 @@ def run_replay(request: ReplayRequest) -> dict[str, object]:
             "clean_checkpoint_sha256": _sha256(request.clean_checkpoint),
             "noisy_checkpoint_sha256": _sha256(request.noisy_checkpoint),
             "noisy_bundle_manifest_sha256": _sha256(request.noisy_bundle / "manifest.json"),
-            "common_rng_sha256": m0._state_sha(common_rng),
+            "common_rng_sha256": measurement["common_rng_sha256"],
             "horizons": list(HORIZONS),
             "scheduler": "none",
             "test_loaded": False,
