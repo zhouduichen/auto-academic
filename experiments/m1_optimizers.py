@@ -659,6 +659,317 @@ class ProtectAdamW(Optimizer):
         return loss
 
 
+class ProtectM11AdamW(ProtectAdamW):
+    """AdamW with bounded, isolated first-moment anomaly protection."""
+
+    mechanism_id = "protect_m11_bounded_anomaly_v1"
+    schema_version = 1
+
+    def __init__(
+        self,
+        params: ParamsT,
+        lr: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0.01,
+        *,
+        protection_enabled: bool = True,
+        alpha: float = 0.99,
+        threshold: float = 3.0,
+        warmup_steps: int = 1250,
+    ) -> None:
+        super().__init__(
+            params,
+            lr,
+            betas,
+            eps,
+            weight_decay,
+            protection_target="m",
+            protection_enabled=protection_enabled,
+        )
+        if (
+            not math.isfinite(alpha)
+            or not 0 <= alpha < 1
+            or not math.isfinite(threshold)
+            or threshold <= 0
+            or isinstance(warmup_steps, bool)
+            or not isinstance(warmup_steps, int)
+            or warmup_steps < 0
+        ):
+            raise ValueError("invalid M1.1 detector configuration")
+        self.alpha = float(alpha)
+        self.threshold = float(threshold)
+        self.warmup_steps = warmup_steps
+        self.mu = 0.0
+        self.scale = 1.0
+        self.previous_rejected = False
+        self.successful_steps = 0
+        self._device_detector = None
+
+    def _ensure_m11_device_detector(self, device: torch.device) -> dict[str, Tensor]:
+        state = self._device_detector
+        if state is not None:
+            if state["mu"].device != device:
+                raise ValueError("detector device changed")
+            return state
+        state = {
+            "mu": torch.tensor(self.mu, dtype=torch.float32, device=device),
+            "scale": torch.tensor(self.scale, dtype=torch.float32, device=device),
+            "successful_steps": torch.tensor(
+                self.successful_steps, dtype=torch.int64, device=device
+            ),
+            "previous_rejected": torch.tensor(
+                self.previous_rejected, dtype=torch.bool, device=device
+            ),
+        }
+        self._device_detector = state
+        return state
+
+    def _next_detector_device(self, score: Tensor) -> dict[str, Tensor]:
+        if score.dtype != torch.float32 or score.numel() != 1:
+            raise TypeError("detector score must be a scalar FP32 tensor")
+        state = self._ensure_m11_device_detector(score.device)
+        next_steps = state["successful_steps"] + 1
+        z = (score - state["mu"]) / torch.clamp(state["scale"], min=1e-6)
+        eligible = next_steps > self.warmup_steps
+        reject = (
+            eligible
+            & (z <= -self.threshold)
+            & (~state["previous_rejected"])
+        )
+        mu = self.alpha * state["mu"] + (1 - self.alpha) * score
+        scale = self.alpha * state["scale"] + (1 - self.alpha) * torch.abs(
+            score - state["mu"]
+        )
+        return {
+            "mu": mu,
+            "scale": scale,
+            "successful_steps": next_steps,
+            "previous_rejected": reject,
+            "admit": ~reject,
+            "reject": reject,
+            "d": z,
+            "transition_off": reject,
+            "transition_on": state["previous_rejected"],
+        }
+
+    def _commit_device_detector(self, state: dict[str, Tensor]) -> None:
+        self._device_detector = {
+            key: state[key]
+            for key in ("mu", "scale", "successful_steps", "previous_rejected")
+        }
+
+    def _sync_detector_to_host(self) -> None:
+        state = self._device_detector
+        if state is None:
+            return
+        self.mu = float(state["mu"].item())
+        self.scale = float(state["scale"].item())
+        self.successful_steps = int(state["successful_steps"].item())
+        self.previous_rejected = bool(state["previous_rejected"].item())
+
+    @staticmethod
+    def _materialize_device_detector(state: dict[str, Tensor]) -> dict[str, object]:
+        transition = "none"
+        if bool(state["transition_off"].item()):
+            transition = "off"
+        elif bool(state["transition_on"].item()):
+            transition = "on"
+        return {
+            "mu": float(state["mu"].item()),
+            "scale": float(state["scale"].item()),
+            "successful_steps": int(state["successful_steps"].item()),
+            "previous_rejected": bool(state["previous_rejected"].item()),
+            "d": float(state["d"].item()),
+            "admit": bool(state["admit"].item()),
+            "reject": bool(state["reject"].item()),
+            "transition": transition,
+        }
+
+    def observe_score_for_test(self, score: float) -> dict[str, object]:
+        if not math.isfinite(score) or not -1 <= score <= 1:
+            raise ValueError("detector score must be finite and in [-1, 1]")
+        self._sync_detector_to_host()
+        value = torch.tensor(score, dtype=torch.float32)
+        state = self._next_detector_device(value)
+        self._commit_device_detector(state)
+        self._sync_detector_to_host()
+        return self._materialize_device_detector(state)
+
+    @staticmethod
+    def _validate_m11_detector_state(
+        *,
+        mu: float,
+        scale: float,
+        previous_rejected: bool,
+        successful_steps: int,
+    ) -> None:
+        if not math.isfinite(mu):
+            raise ValueError("mu must be finite")
+        if not math.isfinite(scale) or scale <= 0:
+            raise ValueError("scale must be finite and positive")
+        if not isinstance(previous_rejected, bool):
+            raise TypeError("previous_rejected must be boolean")
+        if (
+            isinstance(successful_steps, bool)
+            or not isinstance(successful_steps, int)
+            or successful_steps < 0
+        ):
+            raise ValueError("successful_steps must be a nonnegative integer")
+
+    def set_detector_state_for_test(
+        self,
+        *,
+        mu: float,
+        scale: float,
+        previous_rejected: bool,
+        steps: int,
+    ) -> None:
+        self._validate_m11_detector_state(
+            mu=mu,
+            scale=scale,
+            previous_rejected=previous_rejected,
+            successful_steps=steps,
+        )
+        self.mu = float(mu)
+        self.scale = float(scale)
+        self.previous_rejected = previous_rejected
+        self.successful_steps = steps
+        self._device_detector = None
+
+    def protect_state_dict(self) -> dict[str, object]:
+        self._sync_detector_to_host()
+        return {
+            "schema_version": self.schema_version,
+            "mechanism_id": self.mechanism_id,
+            "protection_enabled": self.protection_enabled,
+            "alpha": self.alpha,
+            "threshold": self.threshold,
+            "warmup_steps": self.warmup_steps,
+            "mu": self.mu,
+            "scale": self.scale,
+            "previous_rejected": self.previous_rejected,
+            "successful_steps": self.successful_steps,
+        }
+
+    def _validate_loaded_protect_state(self, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            raise ValueError("missing protect_state")
+        expected_keys = set(self.protect_state_dict())
+        if set(value) != expected_keys:
+            raise ValueError("invalid protect_state keys")
+        for key, expected in (
+            ("schema_version", self.schema_version),
+            ("mechanism_id", self.mechanism_id),
+            ("protection_enabled", self.protection_enabled),
+            ("alpha", self.alpha),
+            ("threshold", self.threshold),
+            ("warmup_steps", self.warmup_steps),
+        ):
+            if value[key] != expected:
+                raise ValueError(f"checkpoint {key} mismatch")
+        try:
+            mu = float(value["mu"])
+            scale = float(value["scale"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("invalid M1.1 detector values") from error
+        self._validate_m11_detector_state(
+            mu=mu,
+            scale=scale,
+            previous_rejected=value["previous_rejected"],
+            successful_steps=value["successful_steps"],
+        )
+        return value
+
+    def _rebuild_step_cache(self) -> None:
+        self._step_cache.clear()
+        for group in self.param_groups:
+            _validate_group(group)
+            for parameter in group["params"]:
+                if parameter in self.state:
+                    _exp_avg, _exp_avg_sq, step = _read_state(
+                        self.state[parameter], parameter
+                    )
+                    self._step_cache[parameter] = step
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        before_base = copy.deepcopy(Optimizer.state_dict(self))
+        before_protect = copy.deepcopy(self.protect_state_dict())
+        try:
+            incoming = copy.deepcopy(state_dict)
+            protect = self._validate_loaded_protect_state(
+                incoming.pop("protect_state", None)
+            )
+            Optimizer.load_state_dict(self, incoming)
+            self._rebuild_step_cache()
+            self.set_detector_state_for_test(
+                mu=float(protect["mu"]),
+                scale=float(protect["scale"]),
+                previous_rejected=protect["previous_rejected"],
+                steps=protect["successful_steps"],
+            )
+        except Exception:
+            Optimizer.load_state_dict(self, before_base)
+            self._rebuild_step_cache()
+            self.set_detector_state_for_test(
+                mu=float(before_protect["mu"]),
+                scale=float(before_protect["scale"]),
+                previous_rejected=bool(before_protect["previous_rejected"]),
+                steps=int(before_protect["successful_steps"]),
+            )
+            raise
+
+    def _materialize_cpu_step_diagnostics(
+        self,
+        detector: dict[str, Tensor],
+        score: Tensor,
+        gradient_squared_norm: Tensor,
+        active_parameter_count: int,
+    ) -> dict[str, object]:
+        state = self._materialize_device_detector(detector)
+        return {
+            "q": float(score.item()),
+            "mu": state["mu"],
+            "scale": state["scale"],
+            "d": state["d"],
+            "admit": state["admit"],
+            "reject": state["reject"],
+            "transition": state["transition"],
+            "active_parameter_count": active_parameter_count,
+            "gradient_norm": math.sqrt(float(gradient_squared_norm.item())),
+            "overflow_skipped": False,
+            "protection_target": self.protection_target,
+        }
+
+    def diagnostics_summary(self, *, reset: bool = False) -> dict[str, object]:
+        self._sync_detector_to_host()
+        counters = self._diagnostic_counters
+        result: dict[str, object] = {
+            "successful_steps": 0,
+            "admitted_steps": 0,
+            "rejected_steps": 0,
+            "transitions_off": 0,
+            "transitions_on": 0,
+            "mu": self.mu,
+            "scale": self.scale,
+            "previous_rejected": self.previous_rejected,
+            "detector_successful_steps": self.successful_steps,
+            "protection_target": self.protection_target,
+        }
+        if counters is not None:
+            for key, value in zip(_DIAGNOSTIC_KEYS, counters, strict=True):
+                result[key] = int(value.item())
+        for key, value in self._last_device_diagnostics.items():
+            result[key] = (
+                int(value.item())
+                if key == "active_parameter_count"
+                else float(value.item())
+            )
+        if reset and counters is not None:
+            counters.zero_()
+        return result
+
+
 class CAdamW(Optimizer):
     """AdamW-compatible reproduction of CAdam Algorithm 1 (arXiv:2411.19647v2)."""
 
