@@ -48,14 +48,14 @@ The primary continuation uses the frozen noisy-label training sequence and measu
 
 ### Mandatory gate
 
-1. **Four checkpoint-capture runs:** two paired seeds (`301`, `302`) x clean/noisy AdamW. Each runs only through epoch 2 and saves exact epoch-1 and epoch-2 states. Existing validated epoch-3 M1 checkpoints are reused.
+1. **Four checkpoint-capture runs:** two paired seeds (`301`, `302`) x clean/noisy AdamW. Each runs through epoch 3 and saves exact epoch-1, epoch-2, and epoch-3 states. Existing M1 epoch metrics are reused, but its single retained checkpoint is epoch 20 and therefore cannot substitute for the missing early checkpoints.
 2. **Twelve factorial replay bundles:** two seeds x three checkpoints x two continuation regimes. Each bundle contains the four CC/CN/NC/NN branches under one shared replay stream.
 
 This is 16 new GPU jobs and 48 short replay branches. The replay branches are not counted as independent statistical samples; the paired seed is the experimental unit.
 
 ### Conditional confirmation
 
-Only if the AdamW gate passes, run four final-checkpoint CAdam replay bundles: two seeds x two continuation regimes. Existing CAdam checkpoints are reused, so no new CAdam base training is allowed during the ten-day gate.
+Only if the AdamW gate passes, run four late-stage CAdam replay bundles: two seeds x two continuation regimes. Existing paired clean/noisy epoch-20 CAdam checkpoints are reused, so no new CAdam base training is allowed during the ten-day gate.
 
 The hard maximum is therefore 20 new GPU jobs and 64 replay branches. Expected GPU use is under four hours; eight hours is the fail-closed ceiling including sentinel and one infrastructure retry.
 
