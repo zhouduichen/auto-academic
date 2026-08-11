@@ -236,6 +236,9 @@ def _noisy_rejection_summary(cell: Path) -> tuple[int, int, int]:
 
 
 def run_rescue(args: argparse.Namespace) -> dict[str, object]:
+    args.output.mkdir(parents=True, exist_ok=True)
+    decision_path = args.output / "M11_RESCUE_DECISION.json"
+    decision_path.unlink(missing_ok=True)
     commit = source_commit()
     sentinel = validate_m11_sentinel(args.sentinel, commit)
     config = clean.Config(
@@ -323,8 +326,7 @@ def run_rescue(args: argparse.Namespace) -> dict[str, object]:
         "test_loaded": False,
     }
     result = evaluate_rescue(record)
-    args.output.mkdir(parents=True, exist_ok=True)
-    clean._write_json(args.output / "M11_RESCUE_DECISION.json", result)
+    clean._write_json(decision_path, result)
     return result
 
 

@@ -323,6 +323,22 @@ def test_orchestrator_rejects_candidate_from_another_commit(
     assert not (args.output / "M11_RESCUE_DECISION.json").exists()
 
 
+def test_orchestrator_removes_stale_decision_before_sentinel_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = _rescue_args(tmp_path)
+    args.output.mkdir(parents=True)
+    decision = args.output / "M11_RESCUE_DECISION.json"
+    decision.write_text('{"decision":"GO"}', encoding="utf-8")
+    _write_sentinel(args.sentinel, "d" * 40)
+    monkeypatch.setattr(rescue, "source_commit", lambda: "c" * 40)
+
+    with pytest.raises(RuntimeError, match="source commit"):
+        rescue.run_rescue(args)
+
+    assert not decision.exists()
+
+
 def test_failed_sentinel_removes_stale_pass_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
