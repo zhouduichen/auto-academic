@@ -27,6 +27,7 @@ PRIVATE_NAMES = {
     "channel_statistics.npy",
 }
 PILOT_NOISE_SEEDS = (1301, 1302, 1303)
+TRANSPORT_NOISE_SEEDS = (1401, 1402, 1403)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -195,14 +196,41 @@ def prepare_stores(archive: Path, train_payload: Path, output: Path) -> None:
     )
 
 
+def _authorize_sealed_source_reuse(
+    source_manifest: dict[str, object],
+    *,
+    current_commit: str,
+    actual_manifest_sha256: str,
+    expected_manifest_sha256: str | None,
+) -> None:
+    if source_manifest.get("source_commit") == current_commit:
+        return
+    if (
+        expected_manifest_sha256 is None
+        or len(expected_manifest_sha256) != 64
+        or actual_manifest_sha256 != expected_manifest_sha256
+    ):
+        raise RuntimeError("generator/source-store commit mismatch")
+
+
 def generate_noise(
-    source: Path, training: Path, audit: Path, noise_seed: int, opaque_id: str
+    source: Path,
+    training: Path,
+    audit: Path,
+    noise_seed: int,
+    opaque_id: str,
+    *,
+    expected_source_manifest_sha256: str | None = None,
 ) -> None:
     source_manifest = _validate_seal(source)
     if source_manifest["role"] != "private-train-source":
         raise RuntimeError("noise generator requires the private train role")
-    if source_manifest["source_commit"] != _source_commit():
-        raise RuntimeError("generator/source-store commit mismatch")
+    _authorize_sealed_source_reuse(
+        source_manifest,
+        current_commit=_source_commit(),
+        actual_manifest_sha256=_sha(source / "manifest.json"),
+        expected_manifest_sha256=expected_source_manifest_sha256,
+    )
     ids = np.load(source / "sample_ids.npy", allow_pickle=False)
     images = np.load(source / "images.npy", allow_pickle=False)
     clean = np.load(source / "clean_labels.npy", allow_pickle=False)
@@ -355,10 +383,18 @@ def main() -> None:
     generate.add_argument(
         "--noise-seed",
         type=int,
-        choices=(1101, 1102, 1201, 1202, *PILOT_NOISE_SEEDS),
+        choices=(
+            1101,
+            1102,
+            1201,
+            1202,
+            *PILOT_NOISE_SEEDS,
+            *TRANSPORT_NOISE_SEEDS,
+        ),
         required=True,
     )
     generate.add_argument("--opaque-id", required=True)
+    generate.add_argument("--expected-source-manifest-sha256")
     validate = commands.add_parser("validate")
     validate.add_argument("--training", type=Path, required=True)
     validate.add_argument("--image-store", type=Path, required=True)
@@ -367,7 +403,14 @@ def main() -> None:
     if args.command == "prepare":
         prepare_stores(args.archive, args.train_payload, args.output)
     elif args.command == "generate":
-        generate_noise(args.source, args.training, args.audit, args.noise_seed, args.opaque_id)
+        generate_noise(
+            args.source,
+            args.training,
+            args.audit,
+            args.noise_seed,
+            args.opaque_id,
+            expected_source_manifest_sha256=args.expected_source_manifest_sha256,
+        )
     else:
         print(json.dumps(validate_public(args.training, args.image_store, args.tuning_store)))
 

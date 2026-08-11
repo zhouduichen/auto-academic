@@ -20,6 +20,23 @@ def test_rng_domains_and_exact_pps_are_deterministic() -> None:
     assert len(selected) == len(np.unique(selected)) == 160
 
 
+def test_sealed_source_reuse_requires_exact_manifest_hash() -> None:
+    manifest = {"source_commit": "1" * 40}
+    noise._authorize_sealed_source_reuse(
+        manifest,
+        current_commit="2" * 40,
+        actual_manifest_sha256="a" * 64,
+        expected_manifest_sha256="a" * 64,
+    )
+    with pytest.raises(RuntimeError, match="commit mismatch"):
+        noise._authorize_sealed_source_reuse(
+            manifest,
+            current_commit="2" * 40,
+            actual_manifest_sha256="a" * 64,
+            expected_manifest_sha256="b" * 64,
+        )
+
+
 def _tiny_store(root: Path, role: str, source_commit: str) -> None:
     root.mkdir()
     ids = np.asarray([b"cifar100-python-train-v1/00000"], dtype="S30")
