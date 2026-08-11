@@ -47,6 +47,7 @@ class Config:
     workers: int = 4
     device: str = "cuda"
     method: str = "adamw"
+    checkpoint_epochs: tuple[int, ...] = ()
 
 
 class IndexedCIFAR100(Dataset[tuple[Tensor, int]]):
@@ -274,9 +275,36 @@ def _checkpoint(
     temporary.replace(path)
 
 
+def _validate_checkpoint_epochs(config: Config) -> tuple[int, ...]:
+    values = config.checkpoint_epochs
+    if tuple(sorted(set(values))) != values or any(
+        isinstance(epoch, bool) or not 1 <= epoch <= config.epochs for epoch in values
+    ):
+        raise ValueError("checkpoint_epochs must be unique increasing epochs in [1, epochs]")
+    return values
+
+
+def _write_epoch_checkpoints(
+    output_dir: Path,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    next_epoch: int,
+    archive_epochs: tuple[int, ...],
+) -> None:
+    _checkpoint(output_dir / "checkpoint.pt", model, optimizer, next_epoch)
+    if next_epoch in archive_epochs:
+        _checkpoint(
+            output_dir / f"checkpoint-epoch{next_epoch}.pt",
+            model,
+            optimizer,
+            next_epoch,
+        )
+
+
 def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
     if config.augmentation_seed != 10_000 + config.seed:
         raise ValueError("augmentation_seed must equal 10000 + train seed")
+    checkpoint_epochs = _validate_checkpoint_epochs(config)
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
     if summary_path.is_file():
@@ -405,7 +433,7 @@ def run(config: Config, data_dir: Path, output_dir: Path) -> dict[str, object]:
                     json.dumps(epoch_diagnostic, separators=(",", ":"), allow_nan=False)
                     + "\n"
                 )
-        _checkpoint(checkpoint_path, model, optimizer, epoch + 1)
+        _write_epoch_checkpoints(output_dir, model, optimizer, epoch + 1, checkpoint_epochs)
         print(json.dumps(row, sort_keys=True), flush=True)
 
     peak_vram = torch.cuda.max_memory_allocated(device) / 1024**3 if device.type == "cuda" else 0.0
@@ -447,6 +475,7 @@ def parse_args() -> tuple[Config, Path, Path]:
     parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
     parser.add_argument("--method", choices=RUNNER_METHODS, default="adamw")
+    parser.add_argument("--checkpoint-epoch", type=int, action="append", default=[])
     args = parser.parse_args()
     if not 1 <= args.epochs <= 50:
         parser.error("epochs must be in [1, 50]")
@@ -463,6 +492,7 @@ def parse_args() -> tuple[Config, Path, Path]:
         betas=(args.beta1, args.beta2),
         max_grad_norm=args.max_grad_norm,
         method=args.method,
+        checkpoint_epochs=tuple(args.checkpoint_epoch),
     )
     return config, args.data_dir, args.output_dir
 

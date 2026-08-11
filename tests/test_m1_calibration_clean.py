@@ -1,10 +1,13 @@
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
 import experiments.m1_calibration_clean as m1
+import experiments.m1_calibration_noisy as noisy
 
 
 def test_m1_split_is_exact_stratified_and_reproducible() -> None:
@@ -36,6 +39,72 @@ def test_optimizer_uses_retuned_betas() -> None:
     config = m1.Config(seed=101, augmentation_seed=10_101, betas=(0.7, 0.95))
     optimizer = m1._build_optimizer(model, config)
     assert all(group["betas"] == (0.7, 0.95) for group in optimizer.param_groups)
+
+
+def test_checkpoint_epoch_validation_is_exact() -> None:
+    valid = m1.Config(
+        seed=301,
+        augmentation_seed=10_301,
+        epochs=3,
+        checkpoint_epochs=(1, 2, 3),
+    )
+    assert m1._validate_checkpoint_epochs(valid) == (1, 2, 3)
+
+    for epochs in ((2, 1), (1, 1), (0,), (4,)):
+        invalid = m1.Config(
+            seed=301,
+            augmentation_seed=10_301,
+            epochs=3,
+            checkpoint_epochs=epochs,
+        )
+        with pytest.raises(ValueError, match="checkpoint_epochs"):
+            m1._validate_checkpoint_epochs(invalid)
+
+
+def test_checkpoint_archives_do_not_replace_resume_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def fake_checkpoint(path: Path, *args: object) -> None:
+        calls.append(path.name)
+        path.write_bytes(path.name.encode())
+
+    monkeypatch.setattr(m1, "_checkpoint", fake_checkpoint)
+    config = m1.Config(
+        seed=301,
+        augmentation_seed=10_301,
+        epochs=3,
+        checkpoint_epochs=(1, 3),
+    )
+    m1._write_epoch_checkpoints(
+        tmp_path, object(), object(), 1, m1._validate_checkpoint_epochs(config)
+    )
+    assert calls == ["checkpoint.pt", "checkpoint-epoch1.pt"]
+
+
+def test_legacy_input_reuse_requires_exact_frozen_binding() -> None:
+    public = {
+        "source_commit": "a" * 40,
+        "uv_lock_sha256": "old-lock",
+        "test_loaded": False,
+    }
+    current = {"source_commit": "b" * 40, "uv_lock_sha256": "new-lock"}
+    actual = {
+        "noise_bundle_sha256": "1" * 64,
+        "image_store_sha256": "2" * 64,
+        "tuning_store_sha256": "3" * 64,
+        "source_commit": "a" * 40,
+        "test_loaded": False,
+    }
+    assert noisy._validate_input_provenance(public, current, actual, dict(actual)) == {
+        "runner_source_commit": "b" * 40,
+        "input_source_commit": "a" * 40,
+        "reused_sealed_input": True,
+    }
+    forged = {**actual, "noise_bundle_sha256": "9" * 64}
+    with pytest.raises(RuntimeError, match="frozen input binding"):
+        noisy._validate_input_provenance(public, current, actual, forged)
 
 
 def test_small_run_only_constructs_training_dataset(tmp_path: object, monkeypatch: object) -> None:

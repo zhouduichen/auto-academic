@@ -66,40 +66,82 @@ class TuningDataset(Dataset[tuple[Tensor, int]]):
         return m0._transform(image, 4, 4, False), int(self.labels[position])
 
 
+def _validate_input_provenance(
+    public: dict[str, object],
+    current: dict[str, object],
+    actual_binding: dict[str, object],
+    expected_input_binding: dict[str, object] | None,
+) -> dict[str, object]:
+    if expected_input_binding is None:
+        if current["source_commit"] != public["source_commit"]:
+            raise RuntimeError("runner/noise source commit mismatch")
+        if current["uv_lock_sha256"] != public["uv_lock_sha256"]:
+            raise RuntimeError("runner/noise lock mismatch")
+        return {
+            "runner_source_commit": current["source_commit"],
+            "input_source_commit": public["source_commit"],
+            "reused_sealed_input": False,
+        }
+    required = {
+        "noise_bundle_sha256",
+        "image_store_sha256",
+        "tuning_store_sha256",
+        "source_commit",
+        "test_loaded",
+    }
+    if set(expected_input_binding) != required or expected_input_binding != actual_binding:
+        raise RuntimeError("frozen input binding mismatch")
+    if expected_input_binding["source_commit"] != public["source_commit"]:
+        raise RuntimeError("frozen input binding source mismatch")
+    if expected_input_binding["test_loaded"] is not False or public["test_loaded"] is not False:
+        raise RuntimeError("test isolation flag failed")
+    return {
+        "runner_source_commit": current["source_commit"],
+        "input_source_commit": public["source_commit"],
+        "reused_sealed_input": True,
+    }
+
+
 def run(
     config: clean.Config,
     training: Path,
     image_store: Path,
     tuning_store: Path,
     output_dir: Path,
+    *,
+    expected_input_binding: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    checkpoint_epochs = clean._validate_checkpoint_epochs(config)
     public = validate_public(training, image_store, tuning_store)
+    actual_binding = {
+        "noise_bundle_sha256": _sha(training / "manifest.json"),
+        "image_store_sha256": _sha(image_store / "manifest.json"),
+        "tuning_store_sha256": _sha(tuning_store / "manifest.json"),
+        "source_commit": public["source_commit"],
+        "test_loaded": False,
+    }
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "summary.json"
-    if summary_path.is_file():
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        if summary.get("status") == "succeeded":
-            return summary
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.set_num_threads(min(4, os.cpu_count() or 1))
     m0.seed_everything(config.seed)
     device = torch.device(config.device)
     provenance = m0.build_provenance(device)
-    if provenance["source_commit"] != public["source_commit"]:
-        raise RuntimeError("runner/noise source commit mismatch")
-    if provenance["uv_lock_sha256"] != public["uv_lock_sha256"]:
-        raise RuntimeError("runner/noise lock mismatch")
-    clean._write_json(output_dir / "config.json", asdict(config))
-    clean._write_json(
-        output_dir / "input_binding.json",
-        {
-            "noise_bundle_sha256": _sha(training / "manifest.json"),
-            "image_store_sha256": _sha(image_store / "manifest.json"),
-            "tuning_store_sha256": _sha(tuning_store / "manifest.json"),
-            "source_commit": provenance["source_commit"],
-            "test_loaded": False,
-        },
+    input_provenance = _validate_input_provenance(
+        public, provenance, actual_binding, expected_input_binding
     )
+    written_binding = {**actual_binding, **input_provenance}
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        binding_path = output_dir / "input_binding.json"
+        if summary.get("status") == "succeeded":
+            if not binding_path.is_file() or json.loads(
+                binding_path.read_text(encoding="utf-8")
+            ) != written_binding:
+                raise RuntimeError("completed run input binding mismatch")
+            return summary
+    clean._write_json(output_dir / "config.json", asdict(config))
+    clean._write_json(output_dir / "input_binding.json", written_binding)
     clean._write_json(output_dir / "provenance.json", provenance)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -209,7 +251,9 @@ def run(
                     json.dumps(epoch_diagnostic, separators=(",", ":"), allow_nan=False)
                     + "\n"
                 )
-        clean._checkpoint(checkpoint_path, model, optimizer, epoch + 1)
+        clean._write_epoch_checkpoints(
+            output_dir, model, optimizer, epoch + 1, checkpoint_epochs
+        )
         print(json.dumps(row, sort_keys=True), flush=True)
     peak = torch.cuda.max_memory_allocated(device) / 1024**3 if device.type == "cuda" else 0.0
     summary = {
@@ -254,6 +298,8 @@ def main() -> None:
     parser.add_argument("--max-grad-norm", type=float)
     parser.add_argument("--augmentation-seed", type=int)
     parser.add_argument("--method", choices=clean.RUNNER_METHODS, default="adamw")
+    parser.add_argument("--checkpoint-epoch", type=int, action="append", default=[])
+    parser.add_argument("--expected-input-binding", type=Path)
     args = parser.parse_args()
     config = clean.Config(
         seed=args.seed,
@@ -268,10 +314,23 @@ def main() -> None:
         betas=(args.beta1, args.beta2),
         max_grad_norm=args.max_grad_norm,
         method=args.method,
+        checkpoint_epochs=tuple(args.checkpoint_epoch),
+    )
+    expected_input_binding = (
+        json.loads(args.expected_input_binding.read_text(encoding="utf-8"))
+        if args.expected_input_binding is not None
+        else None
     )
     print(
         json.dumps(
-            run(config, args.training, args.image_store, args.tuning_store, args.output_dir),
+            run(
+                config,
+                args.training,
+                args.image_store,
+                args.tuning_store,
+                args.output_dir,
+                expected_input_binding=expected_input_binding,
+            ),
             indent=2,
             sort_keys=True,
         ),
