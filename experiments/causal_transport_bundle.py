@@ -405,9 +405,15 @@ def _optimizer_clock(state: replay.CheckpointState) -> int:
 
 def _request_record(request: TransportRequest) -> dict[str, object]:
     value = asdict(request)
-    return {
-        key: str(item) if isinstance(item, Path) else item for key, item in value.items()
-    }
+    # Round-trip through JSON so tuples in ``clean.Config`` compare exactly to
+    # the lists written in a completed summary after a process restart.
+    return json.loads(
+        json.dumps(
+            value,
+            default=lambda item: str(item) if isinstance(item, Path) else item,
+            sort_keys=True,
+        )
+    )
 
 
 def _validate_existing_bundle(request: TransportRequest) -> dict[str, object] | None:
