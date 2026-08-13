@@ -29,7 +29,7 @@ from experiments.m1_pilot import source_commit as current_source_commit
 from src.arw import m0_core
 
 FROZEN_DOSES = (1, 8, 64, 1250)
-SNAPSHOT_SCHEMA = "causal-transport-exposure/1"
+SNAPSHOT_SCHEMA = "causal-transport-exposure/2"
 SNAPSHOT_MANIFEST = "EXPOSURE_SNAPSHOTS.json"
 
 
@@ -183,7 +183,7 @@ def run_paired_exposure(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
-    common: m0_core.BranchState,
+    common: replay.FactorialBranchState,
     common_rng: dict[str, object],
     batches: list[tuple[Tensor, Tensor, Tensor]],
     *,
@@ -192,7 +192,7 @@ def run_paired_exposure(
 ) -> replay.CheckpointState:
     if not batches:
         raise ValueError("exposure batches must not be empty")
-    m0_core.restore_branch(model, optimizer, common)
+    replay.restore_factorial_branch(model, optimizer, common)
     m0.restore_rng_state(common_rng)
     for images, clean_labels, noisy_labels in batches:
         labels = noisy_labels if noisy else clean_labels
@@ -204,7 +204,7 @@ def run_paired_exposure(
             labels.to(device, non_blocking=True),
         )
     return replay.CheckpointState(
-        deepcopy(m0_core.capture_trainable_state(model)),
+        deepcopy(replay.capture_model_state(model)),
         deepcopy(m0_core.capture_optimizer_state(optimizer)),
         0,
     )
@@ -227,7 +227,7 @@ def _snapshot_payload(
     return {
         "schema": SNAPSHOT_SCHEMA,
         "contract_sha256": contract_sha256,
-        "parameters": state.parameters,
+        "model_state": state.model_state,
         "optimizer": state.optimizer,
         "next_epoch": state.next_epoch,
     }
@@ -273,17 +273,19 @@ def _load_snapshot(path: Path, contract_sha256: str) -> replay.CheckpointState:
         payload = torch.load(path, map_location="cpu", weights_only=False)
     except (OSError, RuntimeError, ValueError) as error:
         raise RuntimeError(f"snapshot cannot be loaded: {path.name}") from error
-    required = {"schema", "contract_sha256", "parameters", "optimizer", "next_epoch"}
+    required = {"schema", "contract_sha256", "model_state", "optimizer", "next_epoch"}
     if not isinstance(payload, dict) or set(payload) != required:
         raise RuntimeError("snapshot schema mismatch")
     if payload["schema"] != SNAPSHOT_SCHEMA or payload["contract_sha256"] != contract_sha256:
         raise RuntimeError("snapshot contract mismatch")
-    if not isinstance(payload["parameters"], dict) or not isinstance(payload["optimizer"], dict):
+    if not isinstance(payload["model_state"], dict) or not isinstance(
+        payload["optimizer"], dict
+    ):
         raise RuntimeError("snapshot state is malformed")
     if not _plain_int(payload["next_epoch"]) or payload["next_epoch"] < 0:
         raise RuntimeError("snapshot epoch is malformed")
     return replay.CheckpointState(
-        parameters=payload["parameters"],
+        model_state=payload["model_state"],
         optimizer=payload["optimizer"],
         next_epoch=payload["next_epoch"],
     )
@@ -546,14 +548,12 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
             noisy_labels=False,
             device=device,
         )
-        common = m0_core.BranchState(
-            deepcopy(m0_core.capture_trainable_state(model)),
+        common = replay.FactorialBranchState(
+            deepcopy(replay.capture_model_state(model)),
             deepcopy(m0_core.capture_optimizer_state(optimizer)),
-            0.0,
-            0.0,
         )
         common_rng = m0.capture_rng_state()
-        m0_core.restore_branch(model, optimizer, common)
+        replay.restore_factorial_branch(model, optimizer, common)
         m0.restore_rng_state(common_rng)
         _apply_plans(
             model,
@@ -565,11 +565,11 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
             device=device,
         )
         clean_state = replay.CheckpointState(
-            deepcopy(m0_core.capture_trainable_state(model)),
+            deepcopy(replay.capture_model_state(model)),
             deepcopy(m0_core.capture_optimizer_state(optimizer)),
             0,
         )
-        m0_core.restore_branch(model, optimizer, common)
+        replay.restore_factorial_branch(model, optimizer, common)
         m0.restore_rng_state(common_rng)
         _apply_plans(
             model,
@@ -581,7 +581,7 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
             device=device,
         )
         noisy_state = replay.CheckpointState(
-            deepcopy(m0_core.capture_trainable_state(model)),
+            deepcopy(replay.capture_model_state(model)),
             deepcopy(m0_core.capture_optimizer_state(optimizer)),
             0,
         )
@@ -599,7 +599,7 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
         )
 
     replay.validate_checkpoint_pair(clean_state, noisy_state)
-    m0_core.restore_trainable_state(model, clean_state.parameters)
+    replay.restore_model_state(model, clean_state.model_state)
     m0_core.restore_optimizer_state(optimizer, clean_state.optimizer)
     cached: list[tuple[Tensor, Tensor]] = []
     for plan in continuation_plans:

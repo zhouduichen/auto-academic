@@ -10,7 +10,6 @@ import torch
 from experiments import causal_transport_bundle as bundle
 from experiments import causal_transport_sentinel as sentinel
 from experiments.m0_optimizer_state import m0_run as m0
-from src.arw import m0_core
 
 
 def _stores(root: Path) -> tuple[Path, Path]:
@@ -30,12 +29,12 @@ def _stores(root: Path) -> tuple[Path, Path]:
     return image, training
 
 
-def _state(model: torch.nn.Module, optimizer: torch.optim.Optimizer) -> m0_core.BranchState:
-    return m0_core.BranchState(
-        deepcopy(m0_core.capture_trainable_state(model)),
-        deepcopy(m0_core.capture_optimizer_state(optimizer)),
-        0.0,
-        0.0,
+def _state(
+    model: torch.nn.Module, optimizer: torch.optim.Optimizer
+) -> bundle.replay.FactorialBranchState:
+    return bundle.replay.FactorialBranchState(
+        deepcopy(bundle.replay.capture_model_state(model)),
+        deepcopy(optimizer.state_dict()),
     )
 
 

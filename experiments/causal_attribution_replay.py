@@ -32,9 +32,58 @@ BRANCH_NAMES = ("CC", "CN", "NC", "NN")
 
 @dataclass(frozen=True)
 class CheckpointState:
-    parameters: dict[str, Tensor]
+    model_state: dict[str, Tensor]
     optimizer: dict[str, Any]
     next_epoch: int
+
+    @property
+    def parameters(self) -> dict[str, Tensor]:
+        """Compatibility alias; transport checkpoints now carry full model state."""
+        return self.model_state
+
+
+@dataclass(frozen=True)
+class FactorialBranchState:
+    model_state: dict[str, Tensor]
+    optimizer: dict[str, Any]
+
+    @property
+    def parameters(self) -> dict[str, Tensor]:
+        """Compatibility alias for existing diagnostic callers."""
+        return self.model_state
+
+
+def capture_model_state(model: nn.Module) -> dict[str, Tensor]:
+    state = model.state_dict()
+    if not state or any(not isinstance(value, Tensor) for value in state.values()):
+        raise ValueError("model state must contain only tensors")
+    return {name: value.detach().clone() for name, value in state.items()}
+
+
+def restore_model_state(model: nn.Module, state: dict[str, Tensor]) -> None:
+    expected = model.state_dict()
+    if not state or any(not isinstance(value, Tensor) for value in state.values()):
+        raise ValueError("model state must contain only tensors")
+    if set(expected) != set(state):
+        raise ValueError("model state names do not match the model")
+    for name, value in state.items():
+        reference = expected[name]
+        if value.shape != reference.shape or value.dtype != reference.dtype:
+            raise ValueError("model state shape or dtype mismatch")
+        _validate_finite(value, f"model state {name}")
+    model.load_state_dict(deepcopy(state), strict=True)
+    restored = model.state_dict()
+    if any(not torch.equal(restored[name], state[name]) for name in state):
+        raise RuntimeError("model state restoration was not exact")
+
+
+def restore_factorial_branch(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    branch: FactorialBranchState,
+) -> None:
+    restore_model_state(model, branch.model_state)
+    m0_core.restore_optimizer_state(optimizer, branch.optimizer)
 
 
 @dataclass(frozen=True)
@@ -77,7 +126,7 @@ def _state_from_payload(model: nn.Module, payload: dict[str, object]) -> Checkpo
         raise ValueError("checkpoint payload is malformed")
     model.load_state_dict(model_state, strict=True)
     return CheckpointState(
-        parameters=m0_core.capture_trainable_state(model),
+        model_state=capture_model_state(model),
         optimizer=deepcopy(optimizer_state),
         next_epoch=int(payload["next_epoch"]),
     )
@@ -120,17 +169,19 @@ def _step_equal(left: object, right: object) -> bool:
 def validate_checkpoint_pair(clean_state: CheckpointState, noisy_state: CheckpointState) -> None:
     if clean_state.next_epoch != noisy_state.next_epoch:
         raise ValueError("checkpoint next_epoch values do not match")
-    if not clean_state.parameters or set(clean_state.parameters) != set(noisy_state.parameters):
-        raise ValueError("checkpoint parameter names do not match")
-    for name in sorted(clean_state.parameters):
-        left = clean_state.parameters[name]
-        right = noisy_state.parameters[name]
+    if not clean_state.model_state or set(clean_state.model_state) != set(
+        noisy_state.model_state
+    ):
+        raise ValueError("checkpoint model-state names do not match")
+    for name in sorted(clean_state.model_state):
+        left = clean_state.model_state[name]
+        right = noisy_state.model_state[name]
         if not isinstance(left, Tensor) or not isinstance(right, Tensor):
-            raise ValueError("checkpoint parameters must be tensors")
+            raise ValueError("checkpoint model state must contain tensors")
         if left.shape != right.shape or left.dtype != right.dtype:
-            raise ValueError("checkpoint parameter shape or dtype mismatch")
-        _validate_finite(left, f"clean parameter {name}")
-        _validate_finite(right, f"noisy parameter {name}")
+            raise ValueError("checkpoint model-state shape or dtype mismatch")
+        _validate_finite(left, f"clean model state {name}")
+        _validate_finite(right, f"noisy model state {name}")
 
     for label, optimizer in (("clean", clean_state.optimizer), ("noisy", noisy_state.optimizer)):
         if set(optimizer) != {"state", "param_groups"}:
@@ -164,20 +215,20 @@ def validate_checkpoint_pair(clean_state: CheckpointState, noisy_state: Checkpoi
 
 def build_factorial_branches(
     clean_state: CheckpointState, noisy_state: CheckpointState
-) -> dict[str, m0_core.BranchState]:
+) -> dict[str, FactorialBranchState]:
     validate_checkpoint_pair(clean_state, noisy_state)
     return {
-        "CC": m0_core.BranchState(
-            deepcopy(clean_state.parameters), deepcopy(clean_state.optimizer), 0.0, 0.0
+        "CC": FactorialBranchState(
+            deepcopy(clean_state.model_state), deepcopy(clean_state.optimizer)
         ),
-        "CN": m0_core.BranchState(
-            deepcopy(clean_state.parameters), deepcopy(noisy_state.optimizer), 0.0, 0.0
+        "CN": FactorialBranchState(
+            deepcopy(clean_state.model_state), deepcopy(noisy_state.optimizer)
         ),
-        "NC": m0_core.BranchState(
-            deepcopy(noisy_state.parameters), deepcopy(clean_state.optimizer), 0.0, 0.0
+        "NC": FactorialBranchState(
+            deepcopy(noisy_state.model_state), deepcopy(clean_state.optimizer)
         ),
-        "NN": m0_core.BranchState(
-            deepcopy(noisy_state.parameters), deepcopy(noisy_state.optimizer), 0.0, 0.0
+        "NN": FactorialBranchState(
+            deepcopy(noisy_state.model_state), deepcopy(noisy_state.optimizer)
         ),
     }
 
@@ -230,15 +281,18 @@ def _training_step(
 def run_cached_branches(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    branches: dict[str, m0_core.BranchState],
+    branches: dict[str, FactorialBranchState],
     cached_batches: list[tuple[Tensor, Tensor]],
     criterion: nn.Module,
     common_rng: dict[str, Any],
     horizons: tuple[int, ...],
     measure: Callable[[str, int], dict[str, object]],
+    branch_order: tuple[str, ...] = BRANCH_NAMES,
 ) -> list[dict[str, object]]:
     if tuple(branches) != BRANCH_NAMES:
         raise ValueError("factorial branches must be ordered CC, CN, NC, NN")
+    if len(branch_order) != len(BRANCH_NAMES) or set(branch_order) != set(BRANCH_NAMES):
+        raise ValueError("branch_order must be an exact permutation of CC, CN, NC, NN")
     if not horizons or tuple(sorted(set(horizons))) != horizons:
         raise ValueError("replay horizons must be unique and increasing")
     if horizons[0] < 0 or horizons[-1] > len(cached_batches):
@@ -246,8 +300,8 @@ def run_cached_branches(
     device = next(model.parameters()).device
     selected = set(horizons)
     rows: list[dict[str, object]] = []
-    for branch_name in BRANCH_NAMES:
-        m0_core.restore_branch(model, optimizer, branches[branch_name])
+    for branch_name in branch_order:
+        restore_factorial_branch(model, optimizer, branches[branch_name])
         m0.restore_rng_state(common_rng)
         for horizon in range(len(cached_batches) + 1):
             if horizon in selected:
@@ -515,56 +569,31 @@ def _validate_existing(request: ReplayRequest) -> dict[str, object] | None:
 def measure_factorial_replay(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    branches: dict[str, m0_core.BranchState],
+    branches: dict[str, FactorialBranchState],
     cached: list[tuple[Tensor, Tensor]],
     probe: list[tuple[Tensor, Tensor]],
     tuning_loader: DataLoader,
     device: torch.device,
+    *,
+    branch_order: tuple[str, ...] = BRANCH_NAMES,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     """Measure one complete crossed replay without performing file I/O."""
     criterion = nn.CrossEntropyLoss()
     common_rng = capture_common_rng()
-    references: dict[int, tuple[m0_core.BranchState, Tensor, float, Tensor]] = {}
-
     def measure_branch(branch_name: str, horizon: int) -> dict[str, object]:
-        state = m0_core.BranchState(
-            m0_core.capture_trainable_state(model),
+        state = FactorialBranchState(
+            capture_model_state(model),
             m0_core.capture_optimizer_state(optimizer),
-            0.0,
-            0.0,
         )
         gradient = _diagnostic_gradient(model, criterion, probe[0], device)
         probe_loss, probabilities = _probe_metrics(model, criterion, probe, device)
-        if branch_name == "CC":
-            references[horizon] = (state, gradient, probe_loss, probabilities)
-            d_theta = d_m = d_v = loss_excess = prediction_js = 0.0
-            gradient_cosine = 1.0
-        else:
-            reference_state, reference_gradient, reference_loss, reference_probabilities = (
-                references[horizon]
-            )
-            d_theta = m0_core.parameter_state_distance(
-                state.parameters, reference_state.parameters
-            )
-            d_m = m0_core.optimizer_moment_distance(
-                state.optimizer, reference_state.optimizer, "exp_avg"
-            )
-            d_v = m0_core.optimizer_moment_distance(
-                state.optimizer, reference_state.optimizer, "exp_avg_sq"
-            )
-            gradient_cosine = m0.gradient_cosine(gradient, reference_gradient)
-            loss_excess = probe_loss - reference_loss
-            prediction_js = _jensen_shannon(probabilities, reference_probabilities)
         row: dict[str, object] = {
             "branch": branch_name,
             "horizon": horizon,
             "probe_loss": probe_loss,
-            "clean_loss_excess": loss_excess,
-            "d_theta": d_theta,
-            "d_m": d_m,
-            "d_v": d_v,
-            "gradient_cosine_to_cc": gradient_cosine,
-            "prediction_js_to_cc": prediction_js,
+            "_state": state,
+            "_gradient": gradient,
+            "_probabilities": probabilities,
             "test_loaded": False,
         }
         if horizon == 512:
@@ -585,7 +614,65 @@ def measure_factorial_replay(
         common_rng,
         HORIZONS,
         measure_branch,
+        branch_order,
     )
+    raw_by_key = {
+        (str(row["branch"]), int(row["horizon"])): row for row in rows
+    }
+    normalized: list[dict[str, object]] = []
+    for branch_name in BRANCH_NAMES:
+        for horizon in HORIZONS:
+            raw = raw_by_key[(branch_name, horizon)]
+            reference = raw_by_key[("CC", horizon)]
+            state = raw["_state"]
+            reference_state = reference["_state"]
+            gradient = raw["_gradient"]
+            reference_gradient = reference["_gradient"]
+            probabilities = raw["_probabilities"]
+            reference_probabilities = reference["_probabilities"]
+            if not isinstance(state, FactorialBranchState) or not isinstance(
+                reference_state, FactorialBranchState
+            ):
+                raise RuntimeError("raw replay state is malformed")
+            if not all(
+                isinstance(value, Tensor)
+                for value in (
+                    gradient,
+                    reference_gradient,
+                    probabilities,
+                    reference_probabilities,
+                )
+            ):
+                raise RuntimeError("raw replay diagnostic is malformed")
+            output = {
+                key: value for key, value in raw.items() if not key.startswith("_")
+            }
+            output.update(
+                {
+                    "clean_loss_excess": float(raw["probe_loss"])
+                    - float(reference["probe_loss"]),
+                    "d_theta": m0_core.parameter_state_distance(
+                        state.model_state, reference_state.model_state
+                    ),
+                    "d_m": m0_core.optimizer_moment_distance(
+                        state.optimizer, reference_state.optimizer, "exp_avg"
+                    ),
+                    "d_v": m0_core.optimizer_moment_distance(
+                        state.optimizer, reference_state.optimizer, "exp_avg_sq"
+                    ),
+                    "gradient_cosine_to_cc": m0.gradient_cosine(
+                        gradient, reference_gradient
+                    ),
+                    "prediction_js_to_cc": _jensen_shannon(
+                        probabilities, reference_probabilities
+                    ),
+                }
+            )
+            for key, value in output.items():
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise FloatingPointError(f"non-finite replay metric: {key}")
+            normalized.append(output)
+    rows = normalized
     by_branch = {
         branch: [row for row in rows if row["branch"] == branch] for branch in BRANCH_NAMES
     }

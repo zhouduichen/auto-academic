@@ -33,7 +33,7 @@ def _state_hash(value: object) -> str:
 
 
 def _factorial_carriers_are_exact(
-    branches: dict[str, m0_core.BranchState],
+    branches: dict[str, replay.FactorialBranchState],
     clean_state: replay.CheckpointState,
     noisy_state: replay.CheckpointState,
 ) -> bool:
@@ -54,7 +54,7 @@ def _factorial_carriers_are_exact(
 def _deterministic_replay(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    branches: dict[str, m0_core.BranchState],
+    branches: dict[str, replay.FactorialBranchState],
     device: torch.device,
 ) -> bool:
     generator = torch.Generator(device="cpu")
@@ -73,7 +73,7 @@ def _deterministic_replay(
         return {
             "branch": branch,
             "horizon": horizon,
-            "parameters_sha256": _state_hash(m0_core.capture_trainable_state(model)),
+            "parameters_sha256": _state_hash(replay.capture_model_state(model)),
             "optimizer_sha256": _state_hash(m0_core.capture_optimizer_state(optimizer)),
             "test_loaded": False,
         }

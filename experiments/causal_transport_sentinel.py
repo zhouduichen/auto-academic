@@ -59,18 +59,18 @@ def evaluate_sentinel(record: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _state(model: nn.Module, optimizer: torch.optim.Optimizer) -> m0_core.BranchState:
-    return m0_core.BranchState(
-        deepcopy(m0_core.capture_trainable_state(model)),
+def _state(
+    model: nn.Module, optimizer: torch.optim.Optimizer
+) -> replay.FactorialBranchState:
+    return replay.FactorialBranchState(
+        deepcopy(replay.capture_model_state(model)),
         deepcopy(m0_core.capture_optimizer_state(optimizer)),
-        0.0,
-        0.0,
     )
 
 
-def _checkpoint(state: m0_core.BranchState) -> replay.CheckpointState:
+def _checkpoint(state: replay.FactorialBranchState) -> replay.CheckpointState:
     return replay.CheckpointState(
-        deepcopy(state.parameters), deepcopy(state.optimizer), 0
+        deepcopy(state.model_state), deepcopy(state.optimizer), 0
     )
 
 
