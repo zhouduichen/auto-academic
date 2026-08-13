@@ -1,7 +1,9 @@
 # JMLR Training-Attribution Transport Long-Paper Design
 
-**Date:** 2026-08-13  
-**Status:** direction approved; awaiting written-spec review  
+**Date:** 2026-08-13
+
+**Status:** direction approved; awaiting written-spec review
+
 **Target:** CCF-A journal regular full-length article, JMLR first and Artificial Intelligence second
 
 ## 1. Problem anchor
