@@ -34,7 +34,7 @@ For the two frozen loss outcomes, a positive margin means parameter rollback low
 - Primary outcomes: `clean_loss_excess_auc_128` and `tuning_loss_h512`.
 - Matrix: 3 seeds × 2 doses × 2 continuations = 12 factorial bundles.
 
-The Hugging Face ResNet checkpoint revision and downloaded file hashes must be pinned in the contract before the CUDA sentinel. No fallback model or online revision substitution is allowed.
+The Hugging Face ResNet checkpoint revision `65a5785d9156231087c481e0c7dd33a5ff6f7e3e` and downloaded file hashes must be pinned in the contract before the CUDA sentinel. No fallback model or online revision substitution is allowed. The earlier design draft named revision `b84c5cd73e9544fa1b67d690748d13a4bdb29267`; implementation audit showed that revision predates `model.safetensors`, so it was replaced before any ResNet result existed.
 
 ## Exact decision rule
 

@@ -13,7 +13,7 @@
 - Preserve the previous Gate B and symmetric-noise `NO-GO` artifacts.
 - Use exactly seeds `(601, 602, 603)`, doses `(8, 64)`, and continuations `("clean", "noisy")`.
 - Reuse sealed symmetric noise bundles `(1501, 1502, 1503)` in fixed order.
-- Use `microsoft/resnet-18` at revision `b84c5cd73e9544fa1b67d690748d13a4bdb29267`; bind local model/config file hashes into the contract.
+- Use `microsoft/resnet-18` at revision `65a5785d9156231087c481e0c7dd33a5ff6f7e3e`; bind local model/config file hashes into the contract. The originally drafted `b84c5cd73e9544fa1b67d690748d13a4bdb29267` revision was rejected during implementation because it contains no `model.safetensors`.
 - Use full-parameter AdamW, learning rate `3e-4`, weight decay `0.1`, betas `(0.9, 0.999)`, epsilon `1e-8`, batch size 32, warm-up 500, no scheduler.
 - Keep official test inaccessible and require `test_loaded=false`.
 - Limit CPU libraries to 12 threads and run GPU bundles serially.
@@ -85,7 +85,7 @@ Expected: collection fails because `experiments.repair_handoff_models` does not 
 
 ```python
 RESNET_MODEL_ID = "microsoft/resnet-18"
-RESNET_REVISION = "b84c5cd73e9544fa1b67d690748d13a4bdb29267"
+RESNET_REVISION = "65a5785d9156231087c481e0c7dd33a5ff6f7e3e"
 VIT_MODEL_ID = "google/vit-base-patch16-224-in21k"
 ALLOWED_HEAD_MISMATCH = {"classifier.1.weight", "classifier.1.bias"}
 
@@ -276,7 +276,7 @@ Verify the original Windows worktree remains untouched. Fetch the branch and add
 
 - [ ] **Step 2: Prefetch and bind the pinned model**
 
-Download only revision `b84c5cd73e9544fa1b67d690748d13a4bdb29267` once, then run `resnet_artifact_binding(local_files_only=True)`. Record exact `config.json` and `model.safetensors` hashes; subsequent experiment commands set Hugging Face and Transformers offline.
+Download only revision `65a5785d9156231087c481e0c7dd33a5ff6f7e3e` once, then run `resnet_artifact_binding(local_files_only=True)`. Record exact `config.json` and `model.safetensors` hashes; subsequent experiment commands set Hugging Face and Transformers offline.
 
 - [ ] **Step 3: Run Windows tests and CUDA preflight**
 

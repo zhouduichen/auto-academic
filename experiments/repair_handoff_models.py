@@ -13,12 +13,12 @@ from experiments import m1_calibration_clean as clean
 
 VIT_MODEL_ID = "google/vit-base-patch16-224-in21k"
 RESNET_MODEL_ID = "microsoft/resnet-18"
-RESNET_REVISION = "b84c5cd73e9544fa1b67d690748d13a4bdb29267"
+RESNET_REVISION = "65a5785d9156231087c481e0c7dd33a5ff6f7e3e"
 ALLOWED_HEAD_MISMATCH = {"classifier.1.weight", "classifier.1.bias"}
 
 
 def _mismatch_names(raw: object) -> set[str]:
-    if not isinstance(raw, list):
+    if not isinstance(raw, (list, set, tuple)):
         raise RuntimeError("ResNet load audit mismatch record is malformed")
     names: set[str] = set()
     for record in raw:
@@ -36,7 +36,7 @@ def _validate_loading_info(loading: object) -> None:
         raise RuntimeError("ResNet load audit is unavailable")
     for field in ("missing_keys", "unexpected_keys", "error_msgs"):
         value = loading.get(field, [])
-        if not isinstance(value, list) or value:
+        if not isinstance(value, (list, set, tuple)) or value:
             raise RuntimeError(f"ResNet load audit failed: {field}")
     if _mismatch_names(loading.get("mismatched_keys", [])) != ALLOWED_HEAD_MISMATCH:
         raise RuntimeError("ResNet load audit failed: mismatched_keys")
