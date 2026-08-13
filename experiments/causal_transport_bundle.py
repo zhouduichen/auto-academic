@@ -22,6 +22,7 @@ from torchvision.datasets import CIFAR100
 from experiments import causal_attribution_replay as replay
 from experiments import m1_calibration_clean as clean
 from experiments import m1_calibration_noisy as noisy
+from experiments import repair_handoff_models as repair_models
 from experiments.m0_optimizer_state import m0_run as m0
 from experiments.m1_noisy_data import _sha, validate_public
 from experiments.m1_pilot import source_commit as current_source_commit
@@ -521,7 +522,7 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
     exposure_plans = plans[request.warmup_steps : request.warmup_steps + request.dose]
     continuation_plans = plans[request.warmup_steps + request.dose :]
 
-    model = clean._build_model(request.config).to(device)
+    model = repair_models.build_transport_model(request.config).to(device)
     optimizer = clean._build_optimizer(model, request.config)
     criterion = nn.CrossEntropyLoss()
     manifest_path = request.output / SNAPSHOT_MANIFEST
