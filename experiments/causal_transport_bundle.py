@@ -419,7 +419,9 @@ def _request_record(request: TransportRequest) -> dict[str, object]:
     )
 
 
-def _validate_existing_bundle(request: TransportRequest) -> dict[str, object] | None:
+def _validate_existing_bundle(
+    request: TransportRequest, branch_order: tuple[str, ...]
+) -> dict[str, object] | None:
     summary_path = request.output / "summary.json"
     manifest_path = request.output / "sha256_manifest.json"
     if not summary_path.is_file() and not manifest_path.is_file():
@@ -437,6 +439,7 @@ def _validate_existing_bundle(request: TransportRequest) -> dict[str, object] | 
         or summary.get("source_commit") != request.source_commit
         or summary.get("contract_sha256") != request.contract_sha256
         or summary.get("request") != _request_record(request)
+        or summary.get("branch_order") != list(branch_order)
         or summary.get("test_loaded") is not False
         or not isinstance(manifest, dict)
     ):
@@ -491,10 +494,18 @@ def _validate_input_binding(request: TransportRequest) -> dict[str, object]:
     return actual
 
 
-def run_bundle(request: TransportRequest) -> dict[str, object]:
+def run_bundle(
+    request: TransportRequest,
+    *,
+    branch_order: tuple[str, ...] = replay.BRANCH_NAMES,
+) -> dict[str, object]:
     """Run or resume one paired-exposure crossed continuation bundle."""
     validate_request(request)
-    existing = _validate_existing_bundle(request)
+    if len(branch_order) != len(replay.BRANCH_NAMES) or set(branch_order) != set(
+        replay.BRANCH_NAMES
+    ):
+        raise ValueError("branch_order must be an exact factorial permutation")
+    existing = _validate_existing_bundle(request, branch_order)
     if existing is not None:
         return existing
     started = time.monotonic()
@@ -613,7 +624,14 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
     branches = replay.build_factorial_branches(clean_state, noisy_state)
     probe, tuning_loader = _probe_and_tuning(request)
     rows, measurement = replay.measure_factorial_replay(
-        model, optimizer, branches, cached, probe, tuning_loader, device
+        model,
+        optimizer,
+        branches,
+        cached,
+        probe,
+        tuning_loader,
+        device,
+        branch_order=branch_order,
     )
     elapsed = time.monotonic() - started
     peak_vram = (
@@ -625,6 +643,7 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
         "request": _request_record(request),
         "source_commit": request.source_commit,
         "contract_sha256": request.contract_sha256,
+        "branch_order": list(branch_order),
         "input_binding": input_binding,
         "uv_lock_sha256": provenance["uv_lock_sha256"],
         "endpoints": measurement["endpoints"],
@@ -646,6 +665,7 @@ def run_bundle(request: TransportRequest) -> dict[str, object]:
             "warmup_steps": request.warmup_steps,
             "dose": request.dose,
             "scheduler": "none",
+            "branch_order": list(branch_order),
             "test_loaded": False,
         },
     )
