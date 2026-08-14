@@ -332,11 +332,16 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             device=args.device,
             expected_input_binding=store_bindings[str(job.seed)],
         )
-        summaries[job.key] = bundle.run_bundle(request)
+        completed = bundle._validate_existing_bundle(request, replay.BRANCH_NAMES)
+        if completed is None:
+            if scientific_source_commit != analysis_source_commit:
+                raise RuntimeError("a contracted Stage-2 bundle is incomplete")
+            completed = bundle.run_bundle(request)
+        summaries[job.key] = completed
         manifest = job.output / "sha256_manifest.json"
         before = manifest.read_bytes()
-        bundle.run_bundle(request)
-        resume_exact = resume_exact and before == manifest.read_bytes()
+        validated = bundle._validate_existing_bundle(request, replay.BRANCH_NAMES)
+        resume_exact = resume_exact and validated == completed and before == manifest.read_bytes()
         trajectories[job.key] = stage1._read_jsonl(job.output / "trajectory_metrics.jsonl")
     decision = evaluate_stage2(
         summaries,
