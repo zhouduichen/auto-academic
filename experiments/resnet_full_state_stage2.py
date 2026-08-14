@@ -246,10 +246,8 @@ def evaluate_stage2(
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
-    source_commit = current_source_commit()
+    analysis_source_commit = current_source_commit()
     model_binding = repair_models.resnet_artifact_binding(local_files_only=True)
-    preflight = stage1._read_json(args.preflight, "CUDA preflight")
-    handoff.validate_preflight(preflight, source_commit=source_commit, model_binding=model_binding)
     stage1_decision_path = args.stage1_output / "FULL_STATE_SENTINEL_DECISION.json"
     stage1_contract_path = args.stage1_output / "FULL_STATE_CONTRACT.json"
     stage1_decision = stage1._read_json(stage1_decision_path, "Stage-1 decision")
@@ -267,9 +265,22 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         str(seed): handoff._binding(path, args.image_store, args.tuning_store)
         for seed, path in sorted(noise_bundles.items())
     }
+    existing_contract_path = args.output / "FULL_STATE_STAGE2_CONTRACT.json"
+    scientific_source_commit = analysis_source_commit
+    if existing_contract_path.is_file():
+        existing_contract = stage1._read_json(
+            existing_contract_path, "existing Stage-2 contract"
+        )
+        scientific_source_commit = str(existing_contract.get("source_commit", ""))
+    preflight = stage1._read_json(args.preflight, "CUDA preflight")
+    handoff.validate_preflight(
+        preflight,
+        source_commit=scientific_source_commit,
+        model_binding=model_binding,
+    )
     contract = write_contract(
         args.output,
-        source_commit=source_commit,
+        source_commit=scientific_source_commit,
         uv_lock_sha256=_sha(Path(__file__).resolve().parents[1] / "uv.lock"),
         model_binding=model_binding,
         store_bindings=store_bindings,
@@ -316,7 +327,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             tuning_store=args.tuning_store,
             noisy_bundle=noise_bundles[job.seed],
             output=job.output,
-            source_commit=source_commit,
+            source_commit=scientific_source_commit,
             contract_sha256=contract_sha256,
             device=args.device,
             expected_input_binding=store_bindings[str(job.seed)],
@@ -332,10 +343,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         trajectories,
         stage2_contract_sha256=contract_sha256,
         stage1_contract_sha256=stage1_contract_sha256,
-        source_commit=source_commit,
+        source_commit=scientific_source_commit,
         stage1_source_commit=stage1_source_commit,
         resume_hashes_exact=resume_exact,
     )
+    decision["analysis_source_commit"] = analysis_source_commit
     handoff._atomic_json(args.output / "FULL_STATE_STAGE2_DECISION.json", decision)
     return {"contract": contract, "stage2": decision}
 
