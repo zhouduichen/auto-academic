@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -244,3 +245,30 @@ def validate_cifar10n(root: Path) -> dict[str, object]:
         "split_manifest_sha256": _sha(root / "SPLIT_MANIFEST.json"),
         **ACCESS_FLAGS,
     }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    seal = commands.add_parser("seal")
+    seal.add_argument("--cifar-root", type=Path, required=True)
+    seal.add_argument("--label-file", type=Path, required=True)
+    seal.add_argument("--output", type=Path, required=True)
+    seal.add_argument("--expected-label-sha256", required=True)
+    validate = commands.add_parser("validate")
+    validate.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    if args.command == "seal":
+        result = seal_cifar10n(
+            cifar_root=args.cifar_root,
+            label_file=args.label_file,
+            output=args.output,
+            expected_label_sha256=args.expected_label_sha256,
+        )
+    else:
+        result = validate_cifar10n(args.output)
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
+
+
+if __name__ == "__main__":
+    main()
