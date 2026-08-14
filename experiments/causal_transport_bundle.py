@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import time
 from copy import deepcopy
@@ -20,6 +21,7 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision.datasets import CIFAR100
 
 from experiments import causal_attribution_replay as replay
+from experiments import cifar10n_transport_data as cifar10n_data
 from experiments import m1_calibration_clean as clean
 from experiments import m1_calibration_noisy as noisy
 from experiments import repair_handoff_models as repair_models
@@ -51,6 +53,9 @@ class TransportRequest:
     device: str = "cuda"
     probe_size: int = 256
     expected_input_binding: dict[str, object] | None = None
+    dataset_name: Literal["cifar100", "cifar10n"] = "cifar100"
+    num_labels: int = 100
+    diagnostic_prefix_steps: int = 0
 
     @classmethod
     def testing(cls, root: Path, *, dose: int) -> TransportRequest:
@@ -104,6 +109,13 @@ def validate_request(request: TransportRequest, *, allow_test_values: bool = Fal
         raise ValueError("augmentation_seed must equal 10000 + seed")
     if not _plain_int(request.probe_size) or request.probe_size <= 0:
         raise ValueError("probe_size must be a positive integer")
+    if request.dataset_name not in {"cifar100", "cifar10n"}:
+        raise ValueError("dataset_name must be cifar100 or cifar10n")
+    expected_labels = 100 if request.dataset_name == "cifar100" else 10
+    if request.num_labels != expected_labels:
+        raise ValueError("num_labels does not match dataset_name")
+    if not _plain_int(request.diagnostic_prefix_steps) or request.diagnostic_prefix_steps < 0:
+        raise ValueError("diagnostic_prefix_steps must be a nonnegative integer")
     if not allow_test_values and request.warmup_steps != 500:
         raise ValueError("warmup_steps must equal the frozen value 500")
     if not allow_test_values and request.source_commit != current_source_commit():
@@ -137,6 +149,7 @@ class PairedTransportDataset(Dataset[tuple[Tensor, int, int]]):
         *,
         clean_targets: np.ndarray,
         augmentation_seed: int,
+        clean_targets_aligned: bool = False,
     ) -> None:
         ids = np.load(image_store / "sample_ids.npy", allow_pickle=False)
         public_ids = np.load(training / "sample_ids.npy", allow_pickle=False)
@@ -150,7 +163,10 @@ class PairedTransportDataset(Dataset[tuple[Tensor, int, int]]):
         originals = np.asarray([int(value.decode("ascii")[-5:]) for value in ids])
         self.row_by_original = {int(value): row for row, value in enumerate(originals)}
         self.clean_targets = np.asarray(clean_targets)
-        if len(self.clean_targets) <= int(originals.max(initial=-1)):
+        self.clean_targets_aligned = clean_targets_aligned
+        if clean_targets_aligned and len(self.clean_targets) != len(ids):
+            raise RuntimeError("aligned clean targets do not match public IDs")
+        if not clean_targets_aligned and len(self.clean_targets) <= int(originals.max(initial=-1)):
             raise RuntimeError("clean targets do not cover all public IDs")
         if len(self.images) != len(ids) or len(self.noisy_labels) != len(ids):
             raise RuntimeError("public store lengths do not match IDs")
@@ -176,7 +192,8 @@ class PairedTransportDataset(Dataset[tuple[Tensor, int, int]]):
             int(rng.integers(0, 9)),
             bool(rng.integers(0, 2)),
         )
-        return tensor, int(self.clean_targets[original]), int(self.noisy_labels[row])
+        clean_row = row if self.clean_targets_aligned else original
+        return tensor, int(self.clean_targets[clean_row]), int(self.noisy_labels[row])
 
 
 def run_paired_exposure(
@@ -384,6 +401,39 @@ def _apply_plans(
         )
 
 
+def stream_label_nll(
+    model: nn.Module,
+    batches: list[tuple[Tensor, Tensor]],
+    device: torch.device,
+    *,
+    num_labels: int,
+) -> float:
+    if not batches or num_labels <= 1:
+        raise ValueError("stream diagnostic inputs are invalid")
+    before = replay.capture_model_state(model)
+    was_training = model.training
+    model.eval()
+    total = 0.0
+    count = 0
+    criterion = nn.CrossEntropyLoss(reduction="sum")
+    with torch.no_grad():
+        for images, labels in batches:
+            logits = m0.forward_logits(model, images.to(device, non_blocking=True))
+            labels = labels.to(device, non_blocking=True)
+            total += float(criterion(logits, labels))
+            count += len(labels)
+    model.train(was_training)
+    after = replay.capture_model_state(model)
+    if set(before) != set(after) or any(
+        not torch.equal(before[name], after[name]) for name in before
+    ):
+        raise RuntimeError("stream diagnostic mutated model state")
+    score = total / count / math.log(num_labels)
+    if not math.isfinite(score):
+        raise FloatingPointError("stream diagnostic is non-finite")
+    return score
+
+
 def _optimizer_clock(state: replay.CheckpointState) -> int:
     raw = state.optimizer.get("state")
     if not isinstance(raw, dict) or not raw:
@@ -479,7 +529,19 @@ def _probe_and_tuning(
 
 
 def _validate_input_binding(request: TransportRequest) -> dict[str, object]:
-    public = validate_public(request.noisy_bundle, request.image_store, request.tuning_store)
+    if request.dataset_name == "cifar10n":
+        validated = cifar10n_data.validate_cifar10n(request.image_store.parent)
+        if (
+            validated["training"] != request.noisy_bundle
+            or validated["image_store"] != request.image_store
+            or validated["tuning_store"] != request.tuning_store
+        ):
+            raise RuntimeError("CIFAR-10N stores do not share one sealed root")
+        public = json.loads(
+            (request.noisy_bundle / "manifest.json").read_text(encoding="utf-8")
+        )
+    else:
+        public = validate_public(request.noisy_bundle, request.image_store, request.tuning_store)
     actual = {
         "noise_bundle_sha256": _sha(request.noisy_bundle / "manifest.json"),
         "image_store_sha256": _sha(request.image_store / "manifest.json"),
@@ -522,20 +584,42 @@ def run_bundle(
             raise RuntimeError("CUDA is required for formal transport evidence")
         torch.cuda.reset_peak_memory_stats(device)
 
-    cifar = CIFAR100(root=request.data_dir, train=True, download=False, transform=None)
+    if request.dataset_name == "cifar100":
+        cifar = CIFAR100(root=request.data_dir, train=True, download=False, transform=None)
+        clean_targets = np.asarray(cifar.targets)
+        clean_targets_aligned = False
+    else:
+        clean_targets = np.load(
+            request.image_store / "clean_labels.npy", allow_pickle=False
+        )
+        clean_targets_aligned = True
     dataset = PairedTransportDataset(
         request.image_store,
         request.noisy_bundle,
-        clean_targets=np.asarray(cifar.targets),
+        clean_targets=clean_targets,
         augmentation_seed=request.config.augmentation_seed,
+        clean_targets_aligned=clean_targets_aligned,
     )
-    total_plans = request.warmup_steps + request.dose + 512
+    total_plans = (
+        request.warmup_steps
+        + request.dose
+        + request.diagnostic_prefix_steps
+        + 512
+    )
     plans = _batch_plans(len(dataset), request.config.batch_size, request.seed, total_plans)
     warmup_plans = plans[: request.warmup_steps]
     exposure_plans = plans[request.warmup_steps : request.warmup_steps + request.dose]
-    continuation_plans = plans[request.warmup_steps + request.dose :]
+    continuation_start = request.warmup_steps + request.dose
+    diagnostic_plans = plans[
+        continuation_start : continuation_start + request.diagnostic_prefix_steps
+    ]
+    continuation_plans = plans[
+        continuation_start + request.diagnostic_prefix_steps :
+    ]
 
-    model = repair_models.build_transport_model(request.config).to(device)
+    model = repair_models.build_transport_model(
+        request.config, num_labels=request.num_labels
+    ).to(device)
     optimizer = clean._build_optimizer(model, request.config)
     criterion = nn.CrossEntropyLoss()
     manifest_path = request.output / SNAPSHOT_MANIFEST
@@ -612,6 +696,27 @@ def run_bundle(
     replay.validate_checkpoint_pair(clean_state, noisy_state)
     replay.restore_model_state(model, clean_state.model_state)
     m0_core.restore_optimizer_state(optimizer, clean_state.optimizer)
+    diagnostic: dict[str, object] | None = None
+    if diagnostic_plans:
+        replay.restore_model_state(model, noisy_state.model_state)
+        diagnostic_batches = []
+        for plan in diagnostic_plans:
+            images, clean_labels, noisy_labels = _materialize_plan(dataset, plan)
+            labels = noisy_labels if request.continuation == "noisy" else clean_labels
+            diagnostic_batches.append((images, labels))
+        diagnostic = {
+            "prefix_steps": request.diagnostic_prefix_steps,
+            "normalized_stream_label_nll": stream_label_nll(
+                model,
+                diagnostic_batches,
+                device,
+                num_labels=request.num_labels,
+            ),
+            "prefix_plan_sha256": hashlib.sha256(
+                json.dumps(diagnostic_plans, separators=(",", ":")).encode()
+            ).hexdigest(),
+        }
+        replay.restore_model_state(model, clean_state.model_state)
     cached: list[tuple[Tensor, Tensor]] = []
     for plan in continuation_plans:
         images, clean_labels, noisy_labels = _materialize_plan(dataset, plan)
@@ -650,6 +755,7 @@ def run_bundle(
         "effects": measurement["effects"],
         "wall_clock_seconds": elapsed,
         "peak_vram_gb": peak_vram,
+        "diagnostic": diagnostic,
         "test_loaded": False,
     }
     request.output.mkdir(parents=True, exist_ok=True)

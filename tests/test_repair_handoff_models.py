@@ -65,6 +65,25 @@ def test_resnet_load_is_pinned_and_allows_only_replaced_head(
     assert all(parameter.requires_grad for parameter in actual.parameters())
 
 
+def test_resnet_accepts_ten_class_confirmation_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_load(*args: object, **kwargs: object) -> tuple[nn.Module, dict[str, object]]:
+        captured.update(kwargs)
+        loading = _allowed_loading()
+        loading["mismatched_keys"] = [
+            ("classifier.1.weight", (1000, 512), (10, 512)),
+            ("classifier.1.bias", (1000,), (10,)),
+        ]
+        return _FakeResNet(), loading
+
+    monkeypatch.setattr(models.ResNetForImageClassification, "from_pretrained", fake_load)
+    models.build_transport_model(_config(models.RESNET_MODEL_ID), num_labels=10)
+    assert captured["num_labels"] == 10
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
