@@ -39,7 +39,7 @@ def _rows(clean: bool, seed: int) -> list[dict[str, object]]:
                 {
                     "branch": branch,
                     "horizon": horizon,
-                    "tuning_loss": value,
+                    "clean_loss_excess": value,
                     "test_loaded": False,
                 }
             )
@@ -94,7 +94,7 @@ def test_stage2_gate_fails_closed_on_matrix_provenance_or_science() -> None:
     broken = deepcopy(trajectories["seed602-dose1250-noisy"])
     for row in broken:
         if row["branch"] == "NC":
-            row["tuning_loss"] = 1.3
+            row["clean_loss_excess"] = 1.3
     trajectories["seed602-dose1250-noisy"] = broken
     assert _evaluate(summaries, trajectories)["decision"] == "NO-GO"
 

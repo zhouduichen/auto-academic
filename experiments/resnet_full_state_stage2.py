@@ -137,7 +137,7 @@ def _margin_by_horizon(rows: list[dict[str, object]]) -> dict[int, float]:
     for row in rows:
         try:
             key = (str(row["branch"]), int(row["horizon"]))
-            value = float(row["tuning_loss"])
+            value = float(row["clean_loss_excess"])
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeError("Stage-2 trajectory is malformed") from error
         if key in indexed or not math.isfinite(value):
@@ -146,8 +146,8 @@ def _margin_by_horizon(rows: list[dict[str, object]]) -> dict[int, float]:
     if set(indexed) != expected:
         raise RuntimeError("Stage-2 trajectory matrix is incomplete")
     return {
-        horizon: float(indexed[("NC", horizon)]["tuning_loss"])
-        - float(indexed[("CN", horizon)]["tuning_loss"])
+        horizon: float(indexed[("NC", horizon)]["clean_loss_excess"])
+        - float(indexed[("CN", horizon)]["clean_loss_excess"])
         for horizon in replay.HORIZONS
     }
 
