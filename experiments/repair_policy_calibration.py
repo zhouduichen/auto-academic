@@ -144,7 +144,14 @@ def _restore_discovery_snapshot(
         state = payload.get("model_state")
         if not isinstance(state, dict):
             raise RuntimeError("complete discovery model state is missing")
-        replay.restore_model_state(model, state)
+        expected = model.state_dict()
+        device_state = {
+            name: value.to(device=expected[name].device)
+            if isinstance(value, torch.Tensor) and name in expected
+            else value
+            for name, value in state.items()
+        }
+        replay.restore_model_state(model, device_state)
         return
     if payload.get("schema") != "causal-transport-exposure/1" or model_key != "vit_lora":
         raise RuntimeError("legacy discovery snapshot is not eligible")
